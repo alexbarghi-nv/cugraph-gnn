@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # cython: profile=False
@@ -260,6 +260,8 @@ cdef check_wholememory_error_code(wholememory_error_code_t err):
         raise ValueError('Invalid value')
     elif err_code == OutOfMemory:
         raise MemoryError('Out of memory')
+    elif err_code == NotSupported:
+        raise NotImplementedError('Not supported')
     else:
         raise NotImplementedError('Error code %d not recognized' % (int(err),))
 
