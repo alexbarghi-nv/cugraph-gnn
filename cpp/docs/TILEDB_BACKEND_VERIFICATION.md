@@ -12,12 +12,10 @@ tested matrix, including cross-rank IDs, duplicates, empty batches, uneven parti
 one-dimensional tensors, and subcolumn views. The C++ TileDB storage tests and the cuGraph-PyG
 `DistTensor` smoke test pass.
 
-The branch is not fully verified against the original checklist for two reasons:
-
-1. core pylibwholegraph local mapping still succeeds unexpectedly for a TileDB tensor and produces
-   a shaped, null-backed view instead of returning `WHOLEMEMORY_NOT_SUPPORTED`;
-2. true multi-node execution was unavailable because this session had access to only `dgx19`, with
-   no scheduler allocation or second node endpoint.
+The locally actionable checklist is complete. Two infrastructure-dependent checks remain: true
+multi-node execution is unavailable because this session has access to only `dgx19`, with no
+scheduler allocation or second node endpoint, and the host has no NVMe block device or mount for a
+cold-NVMe benchmark.
 
 Scatter, file load, and file store correctly return `WHOLEMEMORY_NOT_SUPPORTED`. A missing Cython
 handler initially displayed this as `Error code 9 not recognized`; the handler was added and these
@@ -27,9 +25,9 @@ operations now raise `NotImplementedError("Not supported")`.
 
 The branch now rejects direct local-memory access to TileDB handles with
 `WHOLEMEMORY_NOT_SUPPORTED`. The direct pylibwholegraph constructor also validates an explicit
-partition and converts ordinary Python lists to a `numpy.uintp` array before entering Cython. These
-two fixes passed CPU-side formatting, lint, Cython translation, and Python bytecode checks, but the
-GPU verification matrix in this document has not yet been rerun against them.
+partition and converts ordinary Python lists to a `numpy.uintp` array before entering Cython. A
+focused Python regression test was added, and both fixes passed the one-rank and two-rank GPU
+verification matrices.
 
 ## Environment preparation
 
@@ -147,6 +145,12 @@ Fresh run after the handler change:
 | `TileDBStorage.AcceptsGlobalIdsForALocalPartition` | PASS | 49 ms |
 | **Total** | **2/2 PASS** | **144 ms** |
 
+Post-fix rebuild run:
+
+```text
+2/2 passed; 682 ms total
+```
+
 ## One-rank gather verification
 
 A temporary test harness created rank-local TileDB arrays with
@@ -162,7 +166,9 @@ Fresh post-handler result:
 | Subcolumn view | columns 1–2, output `[7, 2]` | PASS |
 | One-dimensional tensor | output `[7]` | PASS |
 
-Every TileDB result exactly matched the CPU backend.
+Every TileDB result exactly matched the CPU backend. The matrix was rerun after the local-mapping
+and list-partition fixes using ordinary Python lists for the TileDB partition argument; all cases
+passed, and local mapping returned `WHOLEMEMORY_NOT_SUPPORTED`.
 
 ## Two-rank same-node verification
 
@@ -180,8 +186,9 @@ The test used uneven entry partitions `[5, 7]`, making global IDs 4 and 5 the pa
 | 0 | `[0, 11, 4, 5, 5, 1, 4]` | PASS | PASS | PASS | PASS |
 | 1 | `[11, 0, 5, 4, 5, 10, 4]` | PASS | PASS | PASS | PASS |
 
-Both ranks exactly matched the pinned-CPU backend. The initial run and the fresh post-handler rerun
-both passed.
+Both ranks exactly matched the pinned-CPU backend. The initial run, post-handler rerun, and final
+post-fix rerun all passed. The final run used Python list partitions for both the 2-D and 1-D TileDB
+tensors and confirmed local-mapping rejection on both ranks.
 
 ## Unsupported operations
 
@@ -192,17 +199,27 @@ Fresh post-handler results at both one and two ranks were:
 | Scatter | `WHOLEMEMORY_NOT_SUPPORTED` (9) | `NotImplementedError("Not supported")` | PASS |
 | File load | `WHOLEMEMORY_NOT_SUPPORTED` (9) | `NotImplementedError("Not supported")` | PASS |
 | File store | `WHOLEMEMORY_NOT_SUPPORTED` (9) | `NotImplementedError("Not supported")` | PASS |
-| Core pylibwholegraph local mapping | incorrectly returns success | shaped local view | **FAIL** |
+| Core pylibwholegraph local mapping | `WHOLEMEMORY_NOT_SUPPORTED` (9) | `NotImplementedError("Not supported")` | PASS |
 
-Unexpected local-view results were:
+Before the fix, local mapping produced a shaped, null-backed view. The handle-level local-memory
+path now rejects `WHOLEMEMORY_ML_TILEDB` before exposing a pointer. This passed the focused Python
+regression test and the one-rank and two-rank verification matrices. cuGraph-PyG continues to guard
+the operation with `TypeError("TileDB-backed DistTensor has no addressable local tensor")`.
 
-- one rank: shape `[12, 4]`, offset 0;
-- two-rank rank 0: shape `[5, 4]`, offset 0;
-- two-rank rank 1: shape `[7, 4]`, offset 5.
+The regression test is
+`python/pylibwholegraph/pylibwholegraph/tests/pylibwholegraph/test_tiledb_tensor.py`. It verifies a
+list partition, exact gather values, invalid partition validation, and local-mapping rejection.
 
-The TileDB object never allocates addressable feature memory, so these are null-backed views and
-must not be used. cuGraph-PyG separately guards this operation and raises
-`TypeError("TileDB-backed DistTensor has no addressable local tensor")`.
+```bash
+TEST_WM_TILEDB=1 pytest -q \
+  python/pylibwholegraph/pylibwholegraph/tests/pylibwholegraph/test_tiledb_tensor.py
+```
+
+Result:
+
+```text
+1 passed in 4.23s
+```
 
 ## Error code 9 investigation and change
 
@@ -222,10 +239,10 @@ elif err_code == NotSupported:
 `pylibwholegraph` was rebuilt and reinstalled. Runtime tests then confirmed that scatter, file load,
 and file store produce the translated message. Gather correctness was unchanged.
 
-The local-mapping failure is separate. The Python DLPack path calls the handle-level
-`wholememory_get_local_memory()` function rather than the tensor-map API that already rejects
-TileDB. The handle-level function calls the base virtual method and returns success unconditionally;
-the TileDB subclass does not override it.
+The local-mapping failure was separate. The Python DLPack path calls the handle-level
+`wholememory_get_local_memory()` function rather than the tensor-map API that already rejected
+TileDB. `get_local_memory_from_handle()` now detects `WHOLEMEMORY_ML_TILEDB` and returns
+`WHOLEMEMORY_NOT_SUPPORTED` before calling the base virtual method.
 
 ## cuGraph-PyG verification
 
@@ -278,15 +295,16 @@ that change does not touch the gather path.
 
 ### Partition-list API mismatch
 
-`create_wholememory_tensor_from_tiledb()` documents `tensor_entry_partition` as a Python list but
-passes it directly to a typed Cython memoryview. A list raises:
+`create_wholememory_tensor_from_tiledb()` originally documented `tensor_entry_partition` as a
+Python list but passed it directly to a typed Cython memoryview. A list raised:
 
 ```text
 TypeError: a bytes-like object is required, not 'list'
 ```
 
-Using `numpy.asarray(partitions, dtype=numpy.uintp)` works. cuGraph-PyG already performs this
-conversion.
+The direct constructor now checks partition length, positivity, and total size, then converts the
+partition with `numpy.asarray(..., dtype=numpy.uintp)`. Ordinary Python lists passed the focused
+regression test and the final one-rank and two-rank matrices.
 
 ### Non-fatal V100 warning
 
@@ -301,13 +319,17 @@ communication.
 
 ## Remaining work
 
-1. Reject TileDB in `get_local_memory_from_handle()` with `WHOLEMEMORY_NOT_SUPPORTED`, then add a
+1. [x] Reject TileDB in `get_local_memory_from_handle()` with `WHOLEMEMORY_NOT_SUPPORTED` and add a
    Python regression test for local mapping.
-2. Accept ordinary Python lists in the direct pylibwholegraph TileDB partition API, or validate and
-   convert them before entering Cython.
-3. Run the same distributed matrix across at least two physical nodes.
-4. Run cold-storage benchmarks on actual NVMe while collecting physical bytes, bandwidth, TileDB
-   statistics, H2D bandwidth, pinned-memory usage, and device staging usage.
+2. [x] Validate and convert ordinary Python lists in the direct pylibwholegraph TileDB partition
+   API.
+3. [ ] Run the distributed matrix across at least two physical nodes. Blocked on infrastructure:
+   this session exposes only `dgx19`, no scheduler or MPI launcher, and no second node endpoint.
+4. [ ] Run cold-storage benchmarks on actual NVMe while collecting physical bytes, bandwidth,
+   TileDB statistics, H2D bandwidth, pinned-memory usage, and device staging usage. Blocked on
+   infrastructure: the only physical data disks visible to this host are rotational `/dev/sda` and
+   `/dev/sdb`; `/tmp` and `/raid` are mounted from those devices. PCI and sysfs inspection found no
+   NVMe controller or namespace.
 
 ## Final status
 
@@ -320,7 +342,9 @@ communication.
 | Two-rank same-node gathers | PASS |
 | Scatter/load/store rejection | PASS |
 | Cython `NotSupported` translation | PASS |
+| Python list partition handling | PASS |
+| Focused Python TileDB regression | PASS |
 | cuGraph-PyG TileDB smoke test | PASS |
-| Core pylibwholegraph local mapping rejection | **FAIL** |
-| True multi-node test | NOT RUN |
-| Cold NVMe benchmark | NOT RUN |
+| Core pylibwholegraph local mapping rejection | PASS |
+| True multi-node test | BLOCKED: no second node |
+| Cold NVMe benchmark | BLOCKED: no NVMe device |
