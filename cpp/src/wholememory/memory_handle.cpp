@@ -2243,6 +2243,10 @@ wholememory_error_code_t get_local_memory_from_handle(
   if (wholememory_handle == nullptr || wholememory_handle->impl == nullptr) {
     return WHOLEMEMORY_INVALID_INPUT;
   }
+  if (wholememory_handle->impl->get_location() == WHOLEMEMORY_ML_TILEDB) {
+    WHOLEMEMORY_ERROR("TileDB storage has no directly addressable local memory");
+    return WHOLEMEMORY_NOT_SUPPORTED;
+  }
   wholememory_handle->impl->get_local_memory(local_ptr, local_size, local_offset);
   return WHOLEMEMORY_SUCCESS;
 }

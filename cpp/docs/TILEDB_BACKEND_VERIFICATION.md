@@ -23,6 +23,14 @@ Scatter, file load, and file store correctly return `WHOLEMEMORY_NOT_SUPPORTED`.
 handler initially displayed this as `Error code 9 not recognized`; the handler was added and these
 operations now raise `NotImplementedError("Not supported")`.
 
+### Post-verification fixes
+
+The branch now rejects direct local-memory access to TileDB handles with
+`WHOLEMEMORY_NOT_SUPPORTED`. The direct pylibwholegraph constructor also validates an explicit
+partition and converts ordinary Python lists to a `numpy.uintp` array before entering Cython. These
+two fixes passed CPU-side formatting, lint, Cython translation, and Python bytecode checks, but the
+GPU verification matrix in this document has not yet been rerun against them.
+
 ## Environment preparation
 
 Testing was isolated from the existing `rapids` environment in:

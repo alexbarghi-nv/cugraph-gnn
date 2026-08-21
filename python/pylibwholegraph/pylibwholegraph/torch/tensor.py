@@ -16,6 +16,7 @@ from .dlpack_utils import torch_import_from_dlpack
 from .wholegraph_env import wrap_torch_tensor, get_wholegraph_env_fns, get_stream
 
 torch = import_optional("torch")
+numpy = import_optional("numpy")
 
 WholeMemoryMemoryType = wmb.WholeMemoryMemoryType
 WholeMemoryMemoryLocation = wmb.WholeMemoryMemoryLocation
@@ -276,6 +277,16 @@ def create_wholememory_tensor_from_tiledb(
     td.set_shape(sizes)
     td.set_stride(strides)
     td.set_dtype(torch_dtype_to_wholememory_dtype(dtype))
+    if tensor_entry_partition is not None:
+        if len(tensor_entry_partition) != comm.get_size():
+            raise ValueError("tensor_entry_partition must contain one entry per rank")
+        if any(entry <= 0 for entry in tensor_entry_partition):
+            raise ValueError("tensor_entry_partition entries must be positive")
+        if sum(tensor_entry_partition) != sizes[0]:
+            raise ValueError("tensor_entry_partition must sum to sizes[0]")
+        tensor_entry_partition = numpy.asarray(
+            tensor_entry_partition, dtype=numpy.uintp
+        )
     return WholeMemoryTensor(
         wmb.create_tiledb_wholememory_tensor(
             td, comm.wmb_comm, resolved_uri, tensor_entry_partition
