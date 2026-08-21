@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # cython: profile=False
@@ -52,6 +52,7 @@ cdef extern from "wholememory/wholememory.h":
         WHOLEMEMORY_ML_NONE                 "WHOLEMEMORY_ML_NONE"
         WHOLEMEMORY_ML_DEVICE               "WHOLEMEMORY_ML_DEVICE"
         WHOLEMEMORY_ML_HOST                 "WHOLEMEMORY_ML_HOST"
+        WHOLEMEMORY_ML_TILEDB               "WHOLEMEMORY_ML_TILEDB"
 
     ctypedef enum wholememory_distributed_backend_t:
         WHOLEMEMORY_DB_NONE                 "WHOLEMEMORY_DB_NONE"
@@ -224,6 +225,7 @@ cpdef enum WholeMemoryMemoryLocation:
     MlNone = WHOLEMEMORY_ML_NONE
     MlDevice = WHOLEMEMORY_ML_DEVICE
     MlHost = WHOLEMEMORY_ML_HOST
+    MlTileDB = WHOLEMEMORY_ML_TILEDB
 
 cpdef enum WholeMemoryDistributedBackend:
     DbNone = WHOLEMEMORY_DB_NONE
@@ -258,6 +260,8 @@ cdef check_wholememory_error_code(wholememory_error_code_t err):
         raise ValueError('Invalid value')
     elif err_code == OutOfMemory:
         raise MemoryError('Out of memory')
+    elif err_code == NotSupported:
+        raise NotImplementedError('Not supported')
     else:
         raise NotImplementedError('Error code %d not recognized' % (int(err),))
 
@@ -510,6 +514,13 @@ cdef extern from "wholememory/wholememory_tensor.h":
                                                             wholememory_memory_type_t memory_type,
                                                             wholememory_memory_location_t memory_location,
                                                             size_t * tensor_entry_partition)
+
+    cdef wholememory_error_code_t wholememory_create_tiledb_tensor(
+        wholememory_tensor_t *wholememory_tensor,
+        wholememory_tensor_description_t *tensor_description,
+        wholememory_comm_t comm,
+        const char *array_uri,
+        size_t *tensor_entry_partition)
 
     cdef wholememory_error_code_t wholememory_destroy_tensor(wholememory_tensor_t wholememory_tensor)
 
@@ -1737,6 +1748,35 @@ def create_wholememory_tensor(PyWholeMemoryTensorDescription tensor_description,
                                                            int(mem_type),
                                                            int(mem_location),
                                                            partition_ptr))
+    return wholememory_tensor
+
+def create_tiledb_wholememory_tensor(
+        PyWholeMemoryTensorDescription tensor_description,
+        PyWholeMemoryComm comm,
+        str array_uri,
+        cython.size_t[:] tensor_entry_partition=None):
+    """Open a read-only distributed WholeMemory tensor backed by a local TileDB array."""
+    if tensor_description.dim() != 1 and tensor_description.dim() != 2:
+        raise NotImplementedError('WholeMemory currently only supports 1D or 2D tensors')
+    if tensor_description.stride()[tensor_description.dim() - 1] != 1:
+        raise ValueError('last stride should be 1')
+    if tensor_description.storage_offset() != 0:
+        raise ValueError('storage_offset must be 0 when created')
+    if not array_uri:
+        raise ValueError('array_uri must not be empty')
+
+    wholememory_tensor = PyWholeMemoryTensor()
+    wholememory_tensor.tensor_description = tensor_description.tensor_description
+    cdef size_t* partition_ptr = NULL
+    cdef bytes encoded_uri = array_uri.encode('utf-8')
+    if tensor_entry_partition is not None and tensor_entry_partition.size > 0:
+        partition_ptr = <size_t*>&tensor_entry_partition[0]
+    check_wholememory_error_code(wholememory_create_tiledb_tensor(
+        &wholememory_tensor.wholememory_tensor,
+        &wholememory_tensor.tensor_description,
+        comm.comm_id,
+        encoded_uri,
+        partition_ptr))
     return wholememory_tensor
 
 def make_tensor_as_wholememory(PyWholeMemoryTensorDescription tensor_description,

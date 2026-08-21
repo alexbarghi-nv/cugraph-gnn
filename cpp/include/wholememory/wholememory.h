@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -64,6 +64,7 @@ enum wholememory_memory_location_t {
   WHOLEMEMORY_ML_NONE = 0, /*!< Not defined */
   WHOLEMEMORY_ML_DEVICE,   /*!< Device Memory */
   WHOLEMEMORY_ML_HOST,     /*!< Host Memory */
+  WHOLEMEMORY_ML_TILEDB,   /*!< Read-only feature storage in a rank-local TileDB array */
 };
 
 enum wholememory_distributed_backend_t {
@@ -255,6 +256,23 @@ wholememory_error_code_t wholememory_malloc(wholememory_handle_t* wholememory_ha
                                             wholememory_memory_location_t memory_location,
                                             size_t data_granularity,
                                             size_t* rank_entry_partition = nullptr);
+
+/**
+ * Open a rank-local TileDB array as read-only distributed WholeMemory storage.
+ *
+ * Each communicator rank may provide a different array URI. The array schema must contain an
+ * INT64 dimension named "row", with a zero-based domain covering the local partition, and a
+ * fixed-sized UINT8 attribute named "values" whose cell_val_num equals data_granularity.
+ *
+ * TileDB support is optional at build time. This function returns WHOLEMEMORY_NOT_SUPPORTED when
+ * libwholegraph was built without BUILD_WITH_TILEDB=ON.
+ */
+wholememory_error_code_t wholememory_open_tiledb(wholememory_handle_t* wholememory_handle_ptr,
+                                                 const char* array_uri,
+                                                 size_t total_size,
+                                                 wholememory_comm_t comm,
+                                                 size_t data_granularity,
+                                                 size_t* rank_entry_partition = nullptr);
 
 /**
  * Free allocated WholeMemory Handle

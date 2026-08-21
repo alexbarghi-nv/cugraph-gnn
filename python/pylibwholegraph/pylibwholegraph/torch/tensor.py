@@ -16,6 +16,7 @@ from .dlpack_utils import torch_import_from_dlpack
 from .wholegraph_env import wrap_torch_tensor, get_wholegraph_env_fns, get_stream
 
 torch = import_optional("torch")
+numpy = import_optional("numpy")
 
 WholeMemoryMemoryType = wmb.WholeMemoryMemoryType
 WholeMemoryMemoryLocation = wmb.WholeMemoryMemoryLocation
@@ -242,6 +243,53 @@ def create_wholememory_tensor(
     return WholeMemoryTensor(
         wmb.create_wholememory_tensor(
             td, comm.wmb_comm, wm_memory_type, wm_location, tensor_entry_partition
+        )
+    )
+
+
+def create_wholememory_tensor_from_tiledb(
+    comm: WholeMemoryCommunicator,
+    array_uri: str,
+    sizes: List[int],
+    dtype: "torch.dtype",
+    strides: Union[List[int], None] = None,
+    tensor_entry_partition: Union[List[int], None] = None,
+):
+    """Open read-only feature storage in a rank-local TileDB array.
+
+    ``array_uri`` may contain a ``{rank}`` token, which is replaced with the global communicator
+    rank. Each array stores that rank's local, zero-based rows. Gathers retain WholeMemory's normal
+    CUDA output behavior.
+    """
+    dim = len(sizes)
+    if dim < 1 or dim > 2:
+        raise ValueError("Only dim 1 or 2 is supported now.")
+    if strides is None:
+        strides = [1] * dim
+        strides[0] = sizes[1] if dim == 2 else 1
+    elif len(strides) != dim or strides[-1] != 1:
+        raise ValueError("strides must match sizes and the last stride must be 1")
+    if dim == 2 and strides[0] < sizes[1]:
+        raise ValueError("row stride must be at least the final dimension size")
+
+    resolved_uri = array_uri.replace("{rank}", str(comm.get_rank()))
+    td = wmb.PyWholeMemoryTensorDescription()
+    td.set_shape(sizes)
+    td.set_stride(strides)
+    td.set_dtype(torch_dtype_to_wholememory_dtype(dtype))
+    if tensor_entry_partition is not None:
+        if len(tensor_entry_partition) != comm.get_size():
+            raise ValueError("tensor_entry_partition must contain one entry per rank")
+        if any(entry <= 0 for entry in tensor_entry_partition):
+            raise ValueError("tensor_entry_partition entries must be positive")
+        if sum(tensor_entry_partition) != sizes[0]:
+            raise ValueError("tensor_entry_partition must sum to sizes[0]")
+        tensor_entry_partition = numpy.asarray(
+            tensor_entry_partition, dtype=numpy.uintp
+        )
+    return WholeMemoryTensor(
+        wmb.create_tiledb_wholememory_tensor(
+            td, comm.wmb_comm, resolved_uri, tensor_entry_partition
         )
     )
 

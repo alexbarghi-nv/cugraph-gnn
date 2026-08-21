@@ -36,6 +36,8 @@ VALIDARGS="
    -n
    --pydevelop
    --allgpuarch
+   --enable-nvshmem
+   --enable-tiledb
    --compile-cmd
    --clean
    -h
@@ -59,6 +61,7 @@ HELP="$0 [<target> ...] [<flag> ...]
    --pydevelop                - install the Python packages in editable mode
    --allgpuarch               - build for all supported GPU architectures
    --enable-nvshmem            - build with nvshmem support (beta).
+   --enable-tiledb             - build the experimental read-only TileDB feature backend.
    --compile-cmd               - only output compile commands (invoke CMake without build)
    --clean                    - clean an individual target (note: to do a complete rebuild, use the clean target described above)
    -h                         - print this text
@@ -153,6 +156,11 @@ if hasArg --enable-nvshmem; then
 else
     BUILD_WITH_NVSHMEM=OFF
 fi
+if hasArg --enable-tiledb; then
+    BUILD_WITH_TILEDB=ON
+else
+    BUILD_WITH_TILEDB=OFF
+fi
 if hasArg tests; then
     BUILD_TESTS=ON
 else
@@ -227,7 +235,8 @@ if hasArg libwholegraph || buildDefault || hasArg all ; then
           -DCMAKE_PREFIX_PATH=${INSTALL_PREFIX} \
           -DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE \
           -DBUILD_TESTS=${BUILD_TESTS} \
-          -DBUILD_WITH_NVSHMEM=${BUILD_WITH_NVSHMEM}
+          -DBUILD_WITH_NVSHMEM=${BUILD_WITH_NVSHMEM} \
+          -DBUILD_WITH_TILEDB=${BUILD_WITH_TILEDB}
 
     cd ${LIBWHOLEGRAPH_BUILD_DIR}
 

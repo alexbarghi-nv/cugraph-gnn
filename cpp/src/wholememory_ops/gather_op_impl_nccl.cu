@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <cuda_runtime_api.h>
@@ -108,25 +108,81 @@ wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememor
       wholememory_desc.sizes[1] * total_recv_count, output_desc.dtype);
     void* dev_embedding_recv_buffer_ptr = dev_embedding_recv_buffer.device_malloc(
       wholememory_desc.sizes[1] * indice_desc.size, output_desc.dtype);
-    void* local_fake_ptr = nullptr;
-    WHOLEMEMORY_RETURN_ON_FAIL(wholememory_get_local_memory(
-      &local_fake_ptr, &local_mem_size, &local_mem_offset, wholememory_handle));
-    local_fake_ptr = static_cast<char*>(local_fake_ptr) - local_mem_offset;
-    wholememory_gref_t local_fake_gref =
-      wholememory_create_continuous_global_reference(local_fake_ptr);
     int64_t local_buffer_size[2] = {total_recv_count, wholememory_desc.sizes[1]};
     wholememory_matrix_description_t local_gather_buffer_desc = wholememory_create_matrix_desc(
       local_buffer_size, wholememory_desc.sizes[1], 0, output_desc.dtype);
     auto dev_recv_indice_desc =
       wholememory_create_array_desc(total_recv_count, 0, indice_desc.dtype);
-    WHOLEMEMORY_RETURN_ON_FAIL(gather_func(local_fake_gref,
-                                           wholememory_desc,
-                                           dev_recv_indice_buffer.pointer(),
-                                           dev_recv_indice_desc,
-                                           dev_local_gather_buffer_ptr,
-                                           local_gather_buffer_desc,
-                                           stream,
-                                           gather_sms));
+    auto const memory_location = wholememory_get_memory_location(wholememory_handle);
+    if (memory_location == WHOLEMEMORY_ML_TILEDB) {
+      // TileDB reads caller-owned buffers. Use page-locked buffers so the only required device
+      // staging copy is asynchronous and explicit; the public gather result remains a CUDA tensor.
+      if (wholememory_desc.dtype != output_desc.dtype) {
+        WHOLEMEMORY_ERROR("TileDB gather does not yet support output dtype conversion");
+        return WHOLEMEMORY_NOT_SUPPORTED;
+      }
+      temp_memory_handle host_tiledb_indices(p_env_fns);
+      temp_memory_handle host_tiledb_raw_rows(p_env_fns);
+      temp_memory_handle host_tiledb_gather_rows(p_env_fns);
+      void* host_tiledb_indices_ptr =
+        host_tiledb_indices.pinned_malloc(total_recv_count, indice_desc.dtype);
+      void* host_tiledb_raw_rows_ptr = host_tiledb_raw_rows.pinned_malloc(
+        total_recv_count * embedding_entry_size, WHOLEMEMORY_DT_INT8);
+      void* host_tiledb_gather_rows_ptr = host_tiledb_gather_rows.pinned_malloc(
+        total_recv_count * wholememory_desc.sizes[1], output_desc.dtype);
+
+      auto const index_bytes =
+        total_recv_count * wholememory_dtype_get_element_size(indice_desc.dtype);
+      if (index_bytes > 0) {
+        WM_CUDA_CHECK(cudaMemcpyAsync(host_tiledb_indices_ptr,
+                                      dev_recv_indice_buffer.pointer(),
+                                      index_bytes,
+                                      cudaMemcpyDeviceToHost,
+                                      stream));
+        // TileDB is a CPU API and must not observe the ids until bucket/exchange and D2H finish.
+        WM_CUDA_CHECK(cudaStreamSynchronize(stream));
+      }
+
+      auto const output_row_bytes =
+        wholememory_desc.sizes[1] * wholememory_dtype_get_element_size(output_desc.dtype);
+      WHOLEMEMORY_RETURN_ON_FAIL(
+        wholememory::tiledb_read_rows_from_handle(wholememory_handle,
+                                                  host_tiledb_indices_ptr,
+                                                  indice_desc.dtype,
+                                                  total_recv_count,
+                                                  wholememory_desc.storage_offset * element_size,
+                                                  output_row_bytes,
+                                                  host_tiledb_raw_rows_ptr,
+                                                  total_recv_count * embedding_entry_size,
+                                                  host_tiledb_gather_rows_ptr));
+
+      auto const gather_bytes = total_recv_count * output_row_bytes;
+      if (gather_bytes > 0) {
+        WM_CUDA_CHECK(cudaMemcpyAsync(dev_local_gather_buffer_ptr,
+                                      host_tiledb_gather_rows_ptr,
+                                      gather_bytes,
+                                      cudaMemcpyHostToDevice,
+                                      stream));
+        // Keep the pinned allocation alive through the copy. NCCL remains ordered after it on the
+        // same stream, and receives into the existing device buffer.
+        WM_CUDA_CHECK(cudaStreamSynchronize(stream));
+      }
+    } else {
+      void* local_fake_ptr = nullptr;
+      WHOLEMEMORY_RETURN_ON_FAIL(wholememory_get_local_memory(
+        &local_fake_ptr, &local_mem_size, &local_mem_offset, wholememory_handle));
+      local_fake_ptr = static_cast<char*>(local_fake_ptr) - local_mem_offset;
+      wholememory_gref_t local_fake_gref =
+        wholememory_create_continuous_global_reference(local_fake_ptr);
+      WHOLEMEMORY_RETURN_ON_FAIL(gather_func(local_fake_gref,
+                                             wholememory_desc,
+                                             dev_recv_indice_buffer.pointer(),
+                                             dev_recv_indice_desc,
+                                             dev_local_gather_buffer_ptr,
+                                             local_gather_buffer_desc,
+                                             stream,
+                                             gather_sms));
+    }
     // AllToAllV for embeddings
     size_t embedding_size =
       wholememory_desc.sizes[1] * wholememory_dtype_get_element_size(output_desc.dtype);

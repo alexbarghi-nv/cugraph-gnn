@@ -1,0 +1,67 @@
+# TileDB WholeGraph prototype build/test environment.
+#
+# Keep PyTorch's version and CUDA build pinned together. An unqualified
+# `tiledb` install can otherwise cause conda to choose the newest CPU-only
+# PyTorch build while re-solving the environment.
+name: tiledb-wg
+channels:
+  - rapidsai-nightly
+  - rapidsai
+  - conda-forge
+dependencies:
+  - python=3.12
+  - cuda-version=12.9
+  - cuda-nvcc
+  - cuda-nvml-dev
+  - cuda-nvtx-dev
+  - cuda-profiler-api
+  - libcublas-dev
+  - libcurand-dev
+  - libcusolver-dev
+  - libcusparse-dev
+  - nccl>=2.19
+
+  # CUDA-enabled PyTorch from conda-forge. Pin both packages so a later solve
+  # cannot silently replace them with cpu_mkl builds.
+  - pytorch=2.10.0=*cuda129*
+  - libtorch=2.10.0=*cuda129*
+  - torchdata=0.11.*
+  - pytorch_geometric>=2.5,<2.9
+
+  # RAPIDS 26.10 nightlies used by cugraph-gnn.
+  - cudf==26.10.*,>=0.0.0a0
+  - cugraph==26.10.*,>=0.0.0a0
+  - cuml==26.10.*,>=0.0.0a0
+  - pylibcugraph==26.10.*,>=0.0.0a0
+  - rmm==26.10.*,>=0.0.0a0
+  - cupy>=14.0.1,!=14.1.0
+
+  # Prototype dependency.
+  - tiledb=2.30.*
+
+  # C++ and Python build/test dependencies generated for this repository's
+  # CUDA 12.9 x86_64 development environment.
+  - breathe
+  - cmake>=4.0
+  - cython>=3.2.2
+  - doxygen
+  - gcc_linux-64=14.*
+  - graphviz
+  - ninja
+  - numpy>=2.0,<3.0
+  - pandas
+  - pre-commit
+  - pytest
+  - pytest-benchmark
+  - pytest-cov
+  - pytest-forked
+  - pytest-xdist
+  - rapids-build-backend>=0.4.0,<0.5.0
+  - scikit-build-core>=0.11.0
+  - scipy
+  - setuptools>=77.0.0
+  - wheel
+
+variables:
+  # Required by build.sh's RAPIDS dependency-matrix configuration.
+  RAPIDS_CUDA_VERSION: "12.9"

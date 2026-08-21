@@ -33,6 +33,7 @@ option(CMAKE_CUDA_LINEINFO
 )
 option(BUILD_TESTS "Configure CMake to build tests" ON)
 option(BUILD_WITH_NVSHMEM "Enable nvshmem integration" OFF)
+option(BUILD_WITH_TILEDB "Enable the experimental read-only TileDB feature backend" OFF)
 option(WHOLEGRAPH_EXCLUDE_NVSHMEM_FROM_ALL "Exclude nvshmem targets from wholeGraph's 'all' target"
        ON
 )
@@ -110,6 +111,9 @@ include(./cmake/thirdparty/get_nccl.cmake)
 if(BUILD_WITH_NVSHMEM)
   include(./cmake/thirdparty/get_nvshmem.cmake)
 endif()
+if(BUILD_WITH_TILEDB)
+  find_package(TileDB CONFIG REQUIRED)
+endif()
 
 file(
   GLOB
@@ -124,6 +128,10 @@ file(
   "src/graph_ops/*.cu"
   "src/graph_ops/*.cpp"
 )
+
+if(NOT BUILD_WITH_TILEDB)
+  list(FILTER WHOLEGRAPH_SOURCES EXCLUDE REGEX "/tiledb_storage\\.cpp$")
+endif()
 
 add_library(wholegraph)
 add_library(wholegraph::wholegraph ALIAS wholegraph)
@@ -170,6 +178,18 @@ target_link_libraries(
   PUBLIC CUDA::cuda_driver CUDA::cudart_static raft::raft
   PRIVATE NCCL::NCCL
 )
+
+if(BUILD_WITH_TILEDB)
+  target_compile_definitions(wholegraph PRIVATE WITH_TILEDB_SUPPORT)
+  target_link_libraries(wholegraph PRIVATE TileDB::tiledb)
+
+  add_executable(wholememory_tiledb_ingest tools/tiledb_ingest.cpp)
+  target_link_libraries(wholememory_tiledb_ingest PRIVATE TileDB::tiledb)
+  set_target_properties(
+    wholememory_tiledb_ingest PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+  )
+  install(TARGETS wholememory_tiledb_ingest RUNTIME DESTINATION bin)
+endif()
 
 if(CUDAToolkit_VERSION VERSION_GREATER "12.3")
   # Link the NVML library if CUDA version is greater than 12.3
