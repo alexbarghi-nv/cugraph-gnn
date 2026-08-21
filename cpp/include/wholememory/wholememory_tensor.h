@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #pragma once
@@ -35,6 +35,19 @@ wholememory_error_code_t wholememory_create_tensor(
   wholememory_comm_t comm,
   wholememory_memory_type_t memory_type,
   wholememory_memory_location_t memory_location,
+  size_t* tensor_entry_partition = nullptr);
+
+/**
+ * Open a read-only WholeMemory tensor backed by a rank-local TileDB array.
+ *
+ * The tensor must be one- or two-dimensional, contiguous within each row, and use distributed
+ * partitioning. See wholememory_open_tiledb for the required array schema.
+ */
+wholememory_error_code_t wholememory_create_tiledb_tensor(
+  wholememory_tensor_t* wholememory_tensor,
+  wholememory_tensor_description_t* tensor_description,
+  wholememory_comm_t comm,
+  const char* array_uri,
   size_t* tensor_entry_partition = nullptr);
 
 /**

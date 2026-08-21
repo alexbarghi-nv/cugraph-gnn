@@ -14,7 +14,11 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <memory>
 #include <mutex>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "cuda_macros.hpp"
@@ -26,6 +30,9 @@
 #include "wholememory/wholememory.h"
 
 #include "system_info.hpp"
+#ifdef WITH_TILEDB_SUPPORT
+#include "tiledb_storage.hpp"
+#endif
 #ifdef WITH_NVSHMEM_SUPPORT
 #include "nvshmem.h"
 #include "nvshmemx.h"
@@ -394,6 +401,69 @@ class distributed_wholememory_impl : public wholememory_impl {
     void* local_alloc_mem_ptr = nullptr;
   } no_ipc_handle_;
 };
+
+#ifdef WITH_TILEDB_SUPPORT
+// A TileDB handle participates in the same rank partition and NCCL routing as distributed memory,
+// but intentionally has no addressable local pointer. The gather path calls read_rows() explicitly.
+class tiledb_wholememory_impl : public wholememory_impl {
+ public:
+  tiledb_wholememory_impl(wholememory_handle_t wholememory_handle,
+                          std::string array_uri,
+                          size_t total_size,
+                          wholememory_comm_t comm,
+                          size_t data_granularity,
+                          size_t* rank_entry_partition)
+    : wholememory_impl(wholememory_handle,
+                       total_size,
+                       comm,
+                       WHOLEMEMORY_MT_DISTRIBUTED,
+                       WHOLEMEMORY_ML_TILEDB,
+                       data_granularity,
+                       rank_entry_partition),
+      array_uri_(std::move(array_uri))
+  {
+  }
+
+  void create_memory() override
+  {
+    generate_rank_partition_strategy();
+    WHOLEMEMORY_CHECK(get_local_size() % data_granularity_ == 0);
+    auto const local_row_count = static_cast<int64_t>(get_local_size() / data_granularity_);
+    storage_ =
+      std::make_unique<tiledb_read_only_storage>(array_uri_, data_granularity_, local_row_count);
+  }
+
+  void destroy_memory() noexcept override { storage_.reset(); }
+
+  bool contains_pointer(const void*) const override { return false; }
+
+  void read_rows(const void* ids,
+                 wholememory_dtype_t id_dtype,
+                 size_t id_count,
+                 size_t column_byte_offset,
+                 size_t output_row_bytes,
+                 void* raw_rows,
+                 size_t raw_rows_size,
+                 void* output) const
+  {
+    WHOLEMEMORY_CHECK(storage_ != nullptr);
+    auto const global_row_offset = static_cast<int64_t>(get_local_offset() / data_granularity_);
+    storage_->read_rows(ids,
+                        id_dtype,
+                        id_count,
+                        global_row_offset,
+                        column_byte_offset,
+                        output_row_bytes,
+                        raw_rows,
+                        raw_rows_size,
+                        output);
+  }
+
+ private:
+  std::string array_uri_;
+  std::unique_ptr<tiledb_read_only_storage> storage_;
+};
+#endif
 
 // Implementation for host wholememory that need global map.
 // Rank 0 allocate all host memory and share between all ranks.
@@ -1793,6 +1863,10 @@ wholememory_error_code_t create_wholememory(wholememory_handle_t* wholememory_ha
                                             size_t* rank_entry_partition) noexcept
 {
   try {
+    if (memory_location == WHOLEMEMORY_ML_TILEDB) {
+      WHOLEMEMORY_ERROR("Use wholememory_open_tiledb to create TileDB-backed storage");
+      return WHOLEMEMORY_INVALID_INPUT;
+    }
     if (total_size % data_granularity != 0) return WHOLEMEMORY_INVALID_VALUE;
     if (rank_entry_partition != nullptr) {
       int64_t total_slot_count = 0;
@@ -1928,6 +2002,130 @@ wholememory_error_code_t create_wholememory(wholememory_handle_t* wholememory_ha
   } catch (...) {
     WHOLEMEMORY_FAIL_NOTHROW("Unknown exception.");
   }
+}
+
+wholememory_error_code_t create_tiledb_wholememory(wholememory_handle_t* wholememory_handle_ptr,
+                                                   const char* array_uri,
+                                                   size_t total_size,
+                                                   wholememory_comm_t comm,
+                                                   size_t data_granularity,
+                                                   size_t* rank_entry_partition) noexcept
+{
+#ifndef WITH_TILEDB_SUPPORT
+  (void)wholememory_handle_ptr;
+  (void)array_uri;
+  (void)total_size;
+  (void)comm;
+  (void)data_granularity;
+  (void)rank_entry_partition;
+  WHOLEMEMORY_ERROR("TileDB support was not enabled when libwholegraph was built");
+  return WHOLEMEMORY_NOT_SUPPORTED;
+#else
+  try {
+    if (wholememory_handle_ptr == nullptr || array_uri == nullptr || array_uri[0] == '\0' ||
+        comm == nullptr || data_granularity == 0 || total_size == 0 ||
+        total_size % data_granularity != 0) {
+      return WHOLEMEMORY_INVALID_INPUT;
+    }
+    if (rank_entry_partition != nullptr) {
+      size_t total_entry_count = 0;
+      for (int i = 0; i < comm->world_size; ++i) {
+        WM_COMM_CHECK_ALL_SAME(comm, rank_entry_partition[i]);
+        if (rank_entry_partition[i] == 0) { return WHOLEMEMORY_INVALID_VALUE; }
+        total_entry_count += rank_entry_partition[i];
+      }
+      if (total_entry_count * data_granularity != total_size) { return WHOLEMEMORY_INVALID_VALUE; }
+    }
+
+    *wholememory_handle_ptr = nullptr;
+    std::unique_lock<std::mutex> lock(comm->mu);
+    std::unique_ptr<wholememory_handle_> handle(new wholememory_handle_());
+    handle->handle_id = negotiate_handle_id_with_comm_locked(comm);
+    WM_COMM_CHECK_ALL_SAME(comm, WM_MEM_OP_CREATE);
+    wholememory_create_param params(
+      total_size, WHOLEMEMORY_MT_DISTRIBUTED, WHOLEMEMORY_ML_TILEDB, data_granularity);
+    WM_COMM_CHECK_ALL_SAME(comm, params);
+
+    handle->impl = new tiledb_wholememory_impl(
+      handle.get(), array_uri, total_size, comm, data_granularity, rank_entry_partition);
+    std::string local_open_error;
+    try {
+      handle->impl->create_memory();
+    } catch (std::exception const& error) {
+      local_open_error = error.what();
+    } catch (...) {
+      local_open_error = "unknown local TileDB open failure";
+    }
+    int const local_open_succeeded = local_open_error.empty() ? 1 : 0;
+    std::vector<int> rank_open_succeeded(comm->world_size);
+    comm->host_allgather(&local_open_succeeded, rank_open_succeeded.data(), 1, WHOLEMEMORY_DT_INT);
+    if (std::any_of(rank_open_succeeded.begin(), rank_open_succeeded.end(), [](int succeeded) {
+          return succeeded == 0;
+        })) {
+      if (local_open_error.empty()) {
+        local_open_error = "TileDB array failed to open on another rank";
+      }
+      throw std::runtime_error(local_open_error);
+    }
+    comm->wholememory_map.insert({handle->handle_id, handle.get()});
+    *wholememory_handle_ptr = handle.release();
+    return WHOLEMEMORY_SUCCESS;
+  } catch (std::exception const& error) {
+    WHOLEMEMORY_ERROR("Opening TileDB WholeMemory failed: %s", error.what());
+    return WHOLEMEMORY_LOGIC_ERROR;
+  } catch (...) {
+    WHOLEMEMORY_ERROR("Opening TileDB WholeMemory failed with an unknown exception");
+    return WHOLEMEMORY_UNKNOW_ERROR;
+  }
+#endif
+}
+
+wholememory_error_code_t tiledb_read_rows_from_handle(wholememory_handle_t wholememory_handle,
+                                                      const void* ids,
+                                                      wholememory_dtype_t id_dtype,
+                                                      size_t id_count,
+                                                      size_t column_byte_offset,
+                                                      size_t output_row_bytes,
+                                                      void* raw_rows,
+                                                      size_t raw_rows_size,
+                                                      void* output) noexcept
+{
+#ifndef WITH_TILEDB_SUPPORT
+  (void)wholememory_handle;
+  (void)ids;
+  (void)id_dtype;
+  (void)id_count;
+  (void)column_byte_offset;
+  (void)output_row_bytes;
+  (void)raw_rows;
+  (void)raw_rows_size;
+  (void)output;
+  return WHOLEMEMORY_NOT_SUPPORTED;
+#else
+  try {
+    if (wholememory_handle == nullptr || wholememory_handle->impl == nullptr ||
+        wholememory_handle->impl->get_location() != WHOLEMEMORY_ML_TILEDB) {
+      return WHOLEMEMORY_INVALID_INPUT;
+    }
+    auto* tiledb_impl = dynamic_cast<tiledb_wholememory_impl*>(wholememory_handle->impl);
+    if (tiledb_impl == nullptr) { return WHOLEMEMORY_LOGIC_ERROR; }
+    tiledb_impl->read_rows(ids,
+                           id_dtype,
+                           id_count,
+                           column_byte_offset,
+                           output_row_bytes,
+                           raw_rows,
+                           raw_rows_size,
+                           output);
+    return WHOLEMEMORY_SUCCESS;
+  } catch (std::exception const& error) {
+    WHOLEMEMORY_ERROR("TileDB feature read failed: %s", error.what());
+    return WHOLEMEMORY_LOGIC_ERROR;
+  } catch (...) {
+    WHOLEMEMORY_ERROR("TileDB feature read failed with an unknown exception");
+    return WHOLEMEMORY_UNKNOW_ERROR;
+  }
+#endif
 }
 
 wholememory_error_code_t destroy_wholememory_with_comm_locked(

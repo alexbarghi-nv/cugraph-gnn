@@ -52,14 +52,36 @@ def create_wg_dist_tensor(
         The length of the partition book should be the same as the number of ranks.
         Defaults to an even partitioning scheme.
     backend : str, optional
-        The backend for the distributed tensor [ "nccl" | "vmm" | "nvshmem" ]
+        The backend for the distributed tensor [ "nccl" | "vmm" | "nvshmem" | "tiledb" ]
+        TileDB requires ``tiledb_uri`` in kwargs and is read-only.
     """
     global_comm = wgth.get_global_communicator()
     partition_book = (
         None if partition_book is None else np.asarray(partition_book, dtype=np.uintp)
     )
 
-    if backend == "nccl":
+    if backend == "tiledb":
+        if "cache_policy" in kwargs:
+            raise ValueError(
+                "TileDB storage does not support WholeMemory embedding caches yet"
+            )
+        try:
+            tiledb_uri = kwargs.pop("tiledb_uri")
+        except KeyError as error:
+            raise ValueError("backend='tiledb' requires tiledb_uri") from error
+        if kwargs:
+            raise ValueError(
+                f"Unsupported TileDB options: {', '.join(sorted(kwargs.keys()))}"
+            )
+        return wgth.create_wholememory_tensor_from_tiledb(
+            global_comm,
+            tiledb_uri,
+            shape,
+            dtype,
+            strides=None,
+            tensor_entry_partition=partition_book,
+        )
+    elif backend == "nccl":
         embedding_wholememory_type = "distributed"
     elif backend == "vmm":
         embedding_wholememory_type = "continuous"

@@ -246,6 +246,43 @@ def create_wholememory_tensor(
     )
 
 
+def create_wholememory_tensor_from_tiledb(
+    comm: WholeMemoryCommunicator,
+    array_uri: str,
+    sizes: List[int],
+    dtype: "torch.dtype",
+    strides: Union[List[int], None] = None,
+    tensor_entry_partition: Union[List[int], None] = None,
+):
+    """Open read-only feature storage in a rank-local TileDB array.
+
+    ``array_uri`` may contain a ``{rank}`` token, which is replaced with the global communicator
+    rank. Each array stores that rank's local, zero-based rows. Gathers retain WholeMemory's normal
+    CUDA output behavior.
+    """
+    dim = len(sizes)
+    if dim < 1 or dim > 2:
+        raise ValueError("Only dim 1 or 2 is supported now.")
+    if strides is None:
+        strides = [1] * dim
+        strides[0] = sizes[1] if dim == 2 else 1
+    elif len(strides) != dim or strides[-1] != 1:
+        raise ValueError("strides must match sizes and the last stride must be 1")
+    if dim == 2 and strides[0] < sizes[1]:
+        raise ValueError("row stride must be at least the final dimension size")
+
+    resolved_uri = array_uri.replace("{rank}", str(comm.get_rank()))
+    td = wmb.PyWholeMemoryTensorDescription()
+    td.set_shape(sizes)
+    td.set_stride(strides)
+    td.set_dtype(torch_dtype_to_wholememory_dtype(dtype))
+    return WholeMemoryTensor(
+        wmb.create_tiledb_wholememory_tensor(
+            td, comm.wmb_comm, resolved_uri, tensor_entry_partition
+        )
+    )
+
+
 def create_wholememory_tensor_from_filelist(
     comm: WholeMemoryCommunicator,
     memory_type: str,

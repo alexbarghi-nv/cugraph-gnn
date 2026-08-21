@@ -1,6 +1,6 @@
 # =============================================================================
 # cmake-format: off
-# SPDX-FileCopyrightText: Copyright (c) 2018-2025, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2018-2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 # cmake-format: on
 # =============================================================================
@@ -19,6 +19,9 @@ function(ConfigureTestInternal TEST_NAME)
   )
   if(BUILD_WITH_NVSHMEM)
     target_compile_definitions(${TEST_NAME} PRIVATE WITH_NVSHMEM_SUPPORT)
+  endif()
+  if(BUILD_WITH_TILEDB)
+    target_compile_definitions(${TEST_NAME} PRIVATE WITH_TILEDB_SUPPORT)
   endif()
 
   set_target_properties(
@@ -106,6 +109,11 @@ ConfigureTest(WHOLEMEMORY_HANDLE_TEST wholememory/wholememory_handle_tests.cpp)
 
 # wholememory tensor tests
 ConfigureTest(WHOLEMEMORY_TENSOR_TEST wholememory/wholememory_tensor_tests.cpp)
+
+if(BUILD_WITH_TILEDB)
+  ConfigureTest(TILEDB_STORAGE_TEST wholememory/tiledb_storage_tests.cpp)
+  target_link_libraries(TILEDB_STORAGE_TEST PRIVATE TileDB::tiledb)
+endif()
 
 # wholememory gather op tests
 ConfigureTest(

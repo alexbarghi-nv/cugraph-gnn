@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <wholememory/wholememory_op.h>
@@ -19,8 +19,12 @@ wholememory_error_code_t wholememory_scatter(wholememory_tensor_t input_tensor,
   bool const has_handle                 = wholememory_tensor_has_handle(wholememory_tensor);
   wholememory_memory_type_t memory_type = WHOLEMEMORY_MT_NONE;
   if (has_handle) {
-    memory_type =
-      wholememory_get_memory_type(wholememory_tensor_get_memory_handle(wholememory_tensor));
+    auto const handle = wholememory_tensor_get_memory_handle(wholememory_tensor);
+    memory_type       = wholememory_get_memory_type(handle);
+    if (wholememory_get_memory_location(handle) == WHOLEMEMORY_ML_TILEDB) {
+      WHOLEMEMORY_ERROR("TileDB-backed WholeMemory tensors are read-only");
+      return WHOLEMEMORY_NOT_SUPPORTED;
+    }
   }
   wholememory_matrix_description_t matrix_description;
   auto tensor_description = *wholememory_tensor_get_tensor_description(wholememory_tensor);
