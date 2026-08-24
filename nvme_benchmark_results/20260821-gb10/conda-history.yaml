@@ -1,0 +1,42 @@
+name: cugraph-gnn-tiledb
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - cuda-version=13.0
+  - cmake[version='>=4.0']
+  - ninja
+  - gcc_linux-aarch64=14
+  - gxx_linux-aarch64=14
+  - cuda-nvcc
+  - cuda-nvml-dev
+  - cuda-nvtx-dev
+  - cuda-profiler-api
+  - libcublas-dev
+  - libcurand-dev
+  - libcusolver-dev
+  - libcusparse-dev
+  - libraft[version='=26.10,>=0.0.0a0']
+  - librmm[version='=26.10,>=0.0.0a0']
+  - rmm[version='=26.10,>=0.0.0a0']
+  - pylibcugraph[version='=26.10,>=0.0.0a0']
+  - nccl[version='>=2.19']
+  - tiledb
+  - rapids-build-backend[version='>=0.4,<0.5']
+  - scikit-build-core[version='>=0.11']
+  - cython[version='>=3.2.2']
+  - numpy[version='>=2,<3']
+  - scipy
+  - pytest
+  - pytest-benchmark
+  - pytest-cov
+  - pytest-forked
+  - pytest-xdist
+  - pip
+  - pytorch-gpu[version='>=2.9']
+  - pytorch_geometric
+  - psutil
+  - nodejs
+  - pre-commit
+  - ruff=0.14.3
+prefix: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb

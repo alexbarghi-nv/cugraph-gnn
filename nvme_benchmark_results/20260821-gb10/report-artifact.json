@@ -1,0 +1,757 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "WholeMemory TileDB NVMe Feature-Fetch Benchmark",
+    "description": "Single-GPU comparison of TileDB NVMe, pinned CPU, and CUDA feature gathers.",
+    "generatedAt": "2026-08-21T23:29:36Z",
+    "cards": [
+      {
+        "id": "locality_card",
+        "description": "Best cold TileDB throughput for the 65,536-row locality trace.",
+        "dataset": "summary",
+        "sourceId": "benchmark_json",
+        "metrics": [
+          {
+            "label": "Best locality TileDB GiB/s",
+            "field": "best_locality_tiledb_gib_s",
+            "format": "number"
+          },
+          {
+            "label": "Pinned CPU GiB/s",
+            "field": "locality_cpu_gib_s",
+            "format": "number"
+          },
+          {
+            "label": "CPU throughput multiple",
+            "field": "locality_cpu_slowdown",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "random_card",
+        "description": "Best cold TileDB throughput for the 65,536-row random trace.",
+        "dataset": "summary",
+        "sourceId": "benchmark_json",
+        "metrics": [
+          {
+            "label": "Best random TileDB GiB/s",
+            "field": "best_random_tiledb_gib_s",
+            "format": "number"
+          },
+          {
+            "label": "Pinned CPU GiB/s",
+            "field": "random_cpu_gib_s",
+            "format": "number"
+          },
+          {
+            "label": "CPU throughput multiple",
+            "field": "random_cpu_slowdown",
+            "format": "number"
+          }
+        ]
+      },
+      {
+        "id": "io_card",
+        "description": "Peak observed process block-read rate in a cold TileDB case.",
+        "dataset": "summary",
+        "sourceId": "benchmark_json",
+        "metrics": [
+          {
+            "label": "Peak NVMe read GiB/s",
+            "field": "peak_nvme_gib_s",
+            "format": "number"
+          },
+          {
+            "label": "Read amplification",
+            "field": "peak_io_read_amplification",
+            "format": "number"
+          }
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "locality_latency_chart",
+        "title": "P50 gather latency by backend",
+        "subtitle": "65,536 requested rows, locality-biased trace; resident baselines and cold TileDB.",
+        "type": "bar",
+        "dataset": "locality_latency",
+        "sourceId": "benchmark_json",
+        "encodings": {
+          "x": {
+            "field": "configuration",
+            "type": "nominal",
+            "label": "Configuration"
+          },
+          "y": {
+            "field": "latency_p50_ms",
+            "type": "quantitative",
+            "label": "P50 latency",
+            "unit": "ms"
+          },
+          "tooltip": [
+            {
+              "field": "latency_p95_ms",
+              "type": "quantitative",
+              "label": "P95 latency",
+              "unit": "ms"
+            },
+            {
+              "field": "useful_gib_per_second",
+              "type": "quantitative",
+              "label": "Useful GiB/s"
+            },
+            {
+              "field": "read_amplification",
+              "type": "quantitative",
+              "label": "Read amplification"
+            }
+          ]
+        },
+        "yAxisTitle": "P50 latency (ms)",
+        "valueFormat": "number",
+        "layout": "full"
+      },
+      {
+        "id": "random_amplification_chart",
+        "title": "Cold random-gather read amplification",
+        "subtitle": "Process block-read bytes divided by useful requested feature bytes.",
+        "type": "bar",
+        "dataset": "random_amplification",
+        "sourceId": "benchmark_json",
+        "encodings": {
+          "x": {
+            "field": "batch_label",
+            "type": "ordinal",
+            "label": "Batch size"
+          },
+          "y": {
+            "field": "read_amplification",
+            "type": "quantitative",
+            "label": "Read amplification"
+          },
+          "color": {
+            "field": "tile_extent_label",
+            "type": "nominal",
+            "label": "Tile extent"
+          },
+          "tooltip": [
+            {
+              "field": "storage_read_gib_per_second",
+              "type": "quantitative",
+              "label": "NVMe GiB/s"
+            },
+            {
+              "field": "latency_p50_ms",
+              "type": "quantitative",
+              "label": "P50 latency",
+              "unit": "ms"
+            }
+          ]
+        },
+        "yAxisTitle": "Read amplification (\u00d7)",
+        "valueFormat": "number",
+        "layout": "full"
+      }
+    ],
+    "tables": [
+      {
+        "id": "detail_table",
+        "title": "65,536-row gather detail",
+        "subtitle": "Resident baselines and cold TileDB, 10 samples per configuration.",
+        "dataset": "detail",
+        "sourceId": "benchmark_json",
+        "defaultSort": {
+          "field": "latency_p50_ms",
+          "direction": "desc"
+        },
+        "density": "dense",
+        "layout": "full",
+        "columns": [
+          {
+            "field": "configuration",
+            "label": "Configuration",
+            "type": "text"
+          },
+          {
+            "field": "pattern",
+            "label": "Trace",
+            "type": "text"
+          },
+          {
+            "field": "latency_p50_ms",
+            "label": "P50 ms",
+            "format": "number"
+          },
+          {
+            "field": "latency_p95_ms",
+            "label": "P95 ms",
+            "format": "number"
+          },
+          {
+            "field": "useful_gib_per_second",
+            "label": "Useful GiB/s",
+            "format": "number"
+          },
+          {
+            "field": "storage_read_gib_per_second",
+            "label": "NVMe GiB/s",
+            "format": "number"
+          },
+          {
+            "field": "read_amplification",
+            "label": "Read amp \u00d7",
+            "format": "number"
+          },
+          {
+            "field": "process_cpu_percent",
+            "label": "Process CPU %",
+            "format": "number"
+          }
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "benchmark_json",
+        "label": "8 GiB WholeMemory feature-fetch benchmark",
+        "path": "nvme_benchmark_results/20260821-gb10/final-8g.json",
+        "query": {
+          "engine": "duckdb",
+          "sql": "SELECT result.* FROM read_json_auto('nvme_benchmark_results/20260821-gb10/final-8g.json') AS benchmark, UNNEST(benchmark.results) AS rows(result)",
+          "description": "Loads all raw benchmark rows; the checked-in Python summarizer validates and transforms them into the report datasets.",
+          "executed_at": "2026-08-21T23:29:36Z",
+          "language": "sql",
+          "tables_used": [
+            "nvme_benchmark_results/20260821-gb10/final-8g.json"
+          ],
+          "filters": [
+            "single node and single GPU",
+            "float32 features with 128 values per row",
+            "10 measured repetitions after 3 warmups"
+          ],
+          "metric_definitions": [
+            "Useful GiB/s = requested rows \u00d7 512 bytes \u00f7 measured wall time \u00f7 2^30.",
+            "Read amplification = process block-read bytes \u00f7 requested feature bytes."
+          ]
+        }
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# WholeMemory TileDB NVMe Feature-Fetch Benchmark"
+      },
+      {
+        "id": "technical_summary",
+        "type": "markdown",
+        "sourceId": "benchmark_json",
+        "body": "## Technical summary\n\nThe TileDB prototype is functionally correct and drives the NVMe at up to **7.71 GiB/s**, but it is not competitive with resident WholeMemory backends for these gathers. At a 65,536-row batch, the best cold locality result is **0.525 GiB/s** versus **30.462 GiB/s** for pinned CPU, while the best cold random result is **0.0111 GiB/s** versus **7.648 GiB/s**. The dominant issue is read amplification and synchronous CPU-side query work, not raw NVMe bandwidth."
+      },
+      {
+        "id": "metrics",
+        "type": "metric-strip",
+        "cardIds": [
+          "locality_card",
+          "random_card",
+          "io_card"
+        ]
+      },
+      {
+        "id": "locality_finding",
+        "type": "markdown",
+        "sourceId": "benchmark_json",
+        "body": "## Locality helps, but the resident backends remain roughly 58\u201362\u00d7 faster\n\nThe 256-row TileDB extent is the best cold choice for the locality-biased 65,536-row trace: **56.35 ms p50**, **76.37 ms p95**, and **0.525 GiB/s** useful throughput. Pinned CPU completes the same trace in **1.025 ms p50** and CUDA in **0.959 ms p50**. Locality keeps TileDB read amplification near **1.27\u00d7**, so most of the remaining gap is query, sorting, copying, and synchronization overhead."
+      },
+      {
+        "id": "locality_chart",
+        "type": "chart",
+        "chartId": "locality_latency_chart",
+        "layout": "full"
+      },
+      {
+        "id": "random_finding",
+        "type": "markdown",
+        "sourceId": "benchmark_json",
+        "body": "## Random gathers turn bandwidth into amplification\n\nCold random traces read **253\u00d7 to 16,069\u00d7** more bytes than requested. The fastest disk case reaches **7.71 GiB/s**, yet delivers only **0.0041 GiB/s** of requested features because its read amplification is **1,868\u00d7**. At 65,536 rows, even the best random TileDB configuration is about **687\u00d7** below pinned CPU useful throughput."
+      },
+      {
+        "id": "amplification_chart",
+        "type": "chart",
+        "chartId": "random_amplification_chart",
+        "layout": "full"
+      },
+      {
+        "id": "detail_interpretation",
+        "type": "markdown",
+        "body": "## Exact results show two different failure modes\n\nCold random performance is I/O-amplification dominated. Warm random performance remains far slower than CPU/CUDA even with zero block reads, which isolates substantial CPU/query overhead. The table below keeps the primary 65,536-row comparisons at audit precision."
+      },
+      {
+        "id": "detail",
+        "type": "table",
+        "tableId": "detail_table",
+        "layout": "full"
+      },
+      {
+        "id": "scope",
+        "type": "markdown",
+        "sourceId": "benchmark_json",
+        "body": "## Scope, data, and metric definitions\n\nThe benchmark uses one NVIDIA GB10, one process/rank, an **8 GiB** synthetic table with **16,777,216 \u00d7 128 float32** values, and identical seeded CUDA ID traces for all backends. `cpu` is WholeMemory distributed host memory allocated with `cudaMallocHost`; `cuda` is WholeMemory distributed device memory; TileDB uses the branch's distributed NCCL gather path. Useful throughput counts only requested feature bytes. Read amplification divides Linux process block-read bytes by those useful bytes."
+      },
+      {
+        "id": "methodology",
+        "type": "markdown",
+        "sourceId": "benchmark_json",
+        "body": "## Methodology and robustness checks\n\nEach case has **3 warmups and 10 measured repetitions**; CUDA is synchronized around every gather. Cold TileDB samples issue `POSIX_FADV_DONTNEED` for every array file before timing, and measured block reads confirm that I/O occurred. Warm TileDB files are read fully before timing, and every warm result records zero block reads. The suite covers random and 16-window locality traces, three batch sizes, and 256-, 4,096-, and 65,536-row tile extents. All 48 configuration keys are unique, p50 never exceeds p95, and useful-throughput calculations were independently recomputed."
+      },
+      {
+        "id": "limitations",
+        "type": "markdown",
+        "body": "## Limitations and omitted instrumentation\n\nThis is a single-machine synthetic benchmark, not an application trace. `POSIX_FADV_DONTNEED` is advisory, although process I/O counters verify cold reads. Ten samples give a directional p95 rather than a production tail estimate. The current API does not expose TileDB internal statistics, isolated H2D bandwidth, or peak pinned/device staging memory, so those runbook metrics remain unmeasured. `torch` allocator peaks would not capture WholeMemory's C++ allocations, and GB10 NVML memory reporting is unavailable on this host."
+      },
+      {
+        "id": "next_steps",
+        "type": "markdown",
+        "body": "## Recommended next steps\n\n1. Add bounded chunking and overlap TileDB reads, H2D copies, and NCCL communication; the current synchronous full-batch staging path serializes them.\n2. Reuse pinned buffers and query objects to reduce allocation and setup costs visible even in zero-I/O warm runs.\n3. Replace tile-amplified random access with a row-addressable/direct-I/O layout or an adaptive small-tile path; preserve the 256-row extent for locality-biased workloads.\n4. Expose TileDB stats and WholeMemory staging counters, then profile a representative GNN sampler trace with Nsight Systems before evaluating multi-GPU scale."
+      },
+      {
+        "id": "questions",
+        "type": "markdown",
+        "body": "## Further questions\n\nHow much reuse exists in real sampled-neighborhood traces? Can ID bucketing be preserved across minibatches? Would a compact row store plus `io_uring`/GDS outperform TileDB for random features? Those answers determine whether the backend should optimize around locality or adopt a different physical layout."
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-08-21T23:29:36Z",
+    "status": "ready",
+    "datasets": {
+      "summary": [
+        {
+          "best_locality_tiledb_gib_s": 0.5252,
+          "locality_cpu_gib_s": 30.462,
+          "locality_cpu_slowdown": 58.0,
+          "best_random_tiledb_gib_s": 0.0111,
+          "random_cpu_gib_s": 7.648,
+          "random_cpu_slowdown": 687.1,
+          "peak_nvme_gib_s": 7.713,
+          "peak_io_read_amplification": 1868.0
+        }
+      ],
+      "locality_latency": [
+        {
+          "configuration": "CUDA resident",
+          "backend": "cuda",
+          "tile_extent_rows": null,
+          "cache_mode": "resident",
+          "pattern": "locality",
+          "batch_size": 65536,
+          "latency_p50_ms": 0.959,
+          "latency_p95_ms": 0.964,
+          "useful_gib_per_second": 32.5837,
+          "storage_read_gib_per_second": 0.0,
+          "read_amplification": 0.0,
+          "process_cpu_percent": 100.1,
+          "samples": 10
+        },
+        {
+          "configuration": "CPU pinned",
+          "backend": "cpu",
+          "tile_extent_rows": null,
+          "cache_mode": "resident",
+          "pattern": "locality",
+          "batch_size": 65536,
+          "latency_p50_ms": 1.025,
+          "latency_p95_ms": 1.035,
+          "useful_gib_per_second": 30.4617,
+          "storage_read_gib_per_second": 0.0,
+          "read_amplification": 0.0,
+          "process_cpu_percent": 100.4,
+          "samples": 10
+        },
+        {
+          "configuration": "TileDB 256 cold",
+          "backend": "tiledb",
+          "tile_extent_rows": 256,
+          "cache_mode": "cold",
+          "pattern": "locality",
+          "batch_size": 65536,
+          "latency_p50_ms": 56.35,
+          "latency_p95_ms": 76.365,
+          "useful_gib_per_second": 0.5252,
+          "storage_read_gib_per_second": 0.668,
+          "read_amplification": 1.27,
+          "process_cpu_percent": 476.6,
+          "samples": 10
+        },
+        {
+          "configuration": "TileDB 4096 cold",
+          "backend": "tiledb",
+          "tile_extent_rows": 4096,
+          "cache_mode": "cold",
+          "pattern": "locality",
+          "batch_size": 65536,
+          "latency_p50_ms": 64.346,
+          "latency_p95_ms": 77.041,
+          "useful_gib_per_second": 0.482,
+          "storage_read_gib_per_second": 1.03,
+          "read_amplification": 2.14,
+          "process_cpu_percent": 464.3,
+          "samples": 10
+        },
+        {
+          "configuration": "TileDB 65536 cold",
+          "backend": "tiledb",
+          "tile_extent_rows": 65536,
+          "cache_mode": "cold",
+          "pattern": "locality",
+          "batch_size": 65536,
+          "latency_p50_ms": 228.582,
+          "latency_p95_ms": 259.694,
+          "useful_gib_per_second": 0.1375,
+          "storage_read_gib_per_second": 2.308,
+          "read_amplification": 16.79,
+          "process_cpu_percent": 423.9,
+          "samples": 10
+        }
+      ],
+      "random_amplification": [
+        {
+          "configuration": "TileDB 256",
+          "backend": "tiledb",
+          "tile_extent_rows": 256,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 1024,
+          "latency_p50_ms": 537.907,
+          "latency_p95_ms": 618.272,
+          "useful_gib_per_second": 0.0009,
+          "storage_read_gib_per_second": 6.605,
+          "read_amplification": 7397.47,
+          "process_cpu_percent": 518.3,
+          "samples": 10,
+          "batch_label": "1,024 rows",
+          "tile_extent_label": "256-row tiles"
+        },
+        {
+          "configuration": "TileDB 256",
+          "backend": "tiledb",
+          "tile_extent_rows": 256,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 8192,
+          "latency_p50_ms": 943.408,
+          "latency_p95_ms": 989.49,
+          "useful_gib_per_second": 0.0041,
+          "storage_read_gib_per_second": 7.713,
+          "read_amplification": 1868.02,
+          "process_cpu_percent": 513.2,
+          "samples": 10,
+          "batch_label": "8,192 rows",
+          "tile_extent_label": "256-row tiles"
+        },
+        {
+          "configuration": "TileDB 256",
+          "backend": "tiledb",
+          "tile_extent_rows": 256,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 65536,
+          "latency_p50_ms": 3572.108,
+          "latency_p95_ms": 3695.355,
+          "useful_gib_per_second": 0.0088,
+          "storage_read_gib_per_second": 2.226,
+          "read_amplification": 252.81,
+          "process_cpu_percent": 1011.6,
+          "samples": 10,
+          "batch_label": "65,536 rows",
+          "tile_extent_label": "256-row tiles"
+        },
+        {
+          "configuration": "TileDB 4096",
+          "backend": "tiledb",
+          "tile_extent_rows": 4096,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 1024,
+          "latency_p50_ms": 593.715,
+          "latency_p95_ms": 615.034,
+          "useful_gib_per_second": 0.0008,
+          "storage_read_gib_per_second": 6.351,
+          "read_amplification": 7697.63,
+          "process_cpu_percent": 543.1,
+          "samples": 10,
+          "batch_label": "1,024 rows",
+          "tile_extent_label": "4,096-row tiles"
+        },
+        {
+          "configuration": "TileDB 4096",
+          "backend": "tiledb",
+          "tile_extent_rows": 4096,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 8192,
+          "latency_p50_ms": 1511.875,
+          "latency_p95_ms": 1631.627,
+          "useful_gib_per_second": 0.0025,
+          "storage_read_gib_per_second": 4.864,
+          "read_amplification": 1908.94,
+          "process_cpu_percent": 391.1,
+          "samples": 10,
+          "batch_label": "8,192 rows",
+          "tile_extent_label": "4,096-row tiles"
+        },
+        {
+          "configuration": "TileDB 4096",
+          "backend": "tiledb",
+          "tile_extent_rows": 4096,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 65536,
+          "latency_p50_ms": 3149.01,
+          "latency_p95_ms": 3308.344,
+          "useful_gib_per_second": 0.0099,
+          "storage_read_gib_per_second": 2.533,
+          "read_amplification": 256.05,
+          "process_cpu_percent": 342.6,
+          "samples": 10,
+          "batch_label": "65,536 rows",
+          "tile_extent_label": "4,096-row tiles"
+        },
+        {
+          "configuration": "TileDB 65536",
+          "backend": "tiledb",
+          "tile_extent_rows": 65536,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 1024,
+          "latency_p50_ms": 2737.956,
+          "latency_p95_ms": 2788.22,
+          "useful_gib_per_second": 0.0002,
+          "storage_read_gib_per_second": 2.902,
+          "read_amplification": 16068.75,
+          "process_cpu_percent": 219.0,
+          "samples": 10,
+          "batch_label": "1,024 rows",
+          "tile_extent_label": "65,536-row tiles"
+        },
+        {
+          "configuration": "TileDB 65536",
+          "backend": "tiledb",
+          "tile_extent_rows": 65536,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 8192,
+          "latency_p50_ms": 2708.565,
+          "latency_p95_ms": 2896.48,
+          "useful_gib_per_second": 0.0014,
+          "storage_read_gib_per_second": 2.939,
+          "read_amplification": 2048.39,
+          "process_cpu_percent": 226.5,
+          "samples": 10,
+          "batch_label": "8,192 rows",
+          "tile_extent_label": "65,536-row tiles"
+        },
+        {
+          "configuration": "TileDB 65536",
+          "backend": "tiledb",
+          "tile_extent_rows": 65536,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 65536,
+          "latency_p50_ms": 2820.161,
+          "latency_p95_ms": 2962.052,
+          "useful_gib_per_second": 0.0111,
+          "storage_read_gib_per_second": 2.85,
+          "read_amplification": 256.05,
+          "process_cpu_percent": 256.0,
+          "samples": 10,
+          "batch_label": "65,536 rows",
+          "tile_extent_label": "65,536-row tiles"
+        }
+      ],
+      "detail": [
+        {
+          "configuration": "CUDA resident",
+          "backend": "cuda",
+          "tile_extent_rows": null,
+          "cache_mode": "resident",
+          "pattern": "random",
+          "batch_size": 65536,
+          "latency_p50_ms": 1.083,
+          "latency_p95_ms": 1.269,
+          "useful_gib_per_second": 28.012,
+          "storage_read_gib_per_second": 0.0,
+          "read_amplification": 0.0,
+          "process_cpu_percent": 100.6,
+          "samples": 10
+        },
+        {
+          "configuration": "CPU pinned",
+          "backend": "cpu",
+          "tile_extent_rows": null,
+          "cache_mode": "resident",
+          "pattern": "random",
+          "batch_size": 65536,
+          "latency_p50_ms": 4.088,
+          "latency_p95_ms": 4.098,
+          "useful_gib_per_second": 7.6482,
+          "storage_read_gib_per_second": 0.0,
+          "read_amplification": 0.0,
+          "process_cpu_percent": 100.0,
+          "samples": 10
+        },
+        {
+          "configuration": "TileDB 256 cold",
+          "backend": "tiledb",
+          "tile_extent_rows": 256,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 65536,
+          "latency_p50_ms": 3572.108,
+          "latency_p95_ms": 3695.355,
+          "useful_gib_per_second": 0.0088,
+          "storage_read_gib_per_second": 2.226,
+          "read_amplification": 252.81,
+          "process_cpu_percent": 1011.6,
+          "samples": 10
+        },
+        {
+          "configuration": "TileDB 4096 cold",
+          "backend": "tiledb",
+          "tile_extent_rows": 4096,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 65536,
+          "latency_p50_ms": 3149.01,
+          "latency_p95_ms": 3308.344,
+          "useful_gib_per_second": 0.0099,
+          "storage_read_gib_per_second": 2.533,
+          "read_amplification": 256.05,
+          "process_cpu_percent": 342.6,
+          "samples": 10
+        },
+        {
+          "configuration": "TileDB 65536 cold",
+          "backend": "tiledb",
+          "tile_extent_rows": 65536,
+          "cache_mode": "cold",
+          "pattern": "random",
+          "batch_size": 65536,
+          "latency_p50_ms": 2820.161,
+          "latency_p95_ms": 2962.052,
+          "useful_gib_per_second": 0.0111,
+          "storage_read_gib_per_second": 2.85,
+          "read_amplification": 256.05,
+          "process_cpu_percent": 256.0,
+          "samples": 10
+        },
+        {
+          "configuration": "CUDA resident",
+          "backend": "cuda",
+          "tile_extent_rows": null,
+          "cache_mode": "resident",
+          "pattern": "locality",
+          "batch_size": 65536,
+          "latency_p50_ms": 0.959,
+          "latency_p95_ms": 0.964,
+          "useful_gib_per_second": 32.5837,
+          "storage_read_gib_per_second": 0.0,
+          "read_amplification": 0.0,
+          "process_cpu_percent": 100.1,
+          "samples": 10
+        },
+        {
+          "configuration": "CPU pinned",
+          "backend": "cpu",
+          "tile_extent_rows": null,
+          "cache_mode": "resident",
+          "pattern": "locality",
+          "batch_size": 65536,
+          "latency_p50_ms": 1.025,
+          "latency_p95_ms": 1.035,
+          "useful_gib_per_second": 30.4617,
+          "storage_read_gib_per_second": 0.0,
+          "read_amplification": 0.0,
+          "process_cpu_percent": 100.4,
+          "samples": 10
+        },
+        {
+          "configuration": "TileDB 256 cold",
+          "backend": "tiledb",
+          "tile_extent_rows": 256,
+          "cache_mode": "cold",
+          "pattern": "locality",
+          "batch_size": 65536,
+          "latency_p50_ms": 56.35,
+          "latency_p95_ms": 76.365,
+          "useful_gib_per_second": 0.5252,
+          "storage_read_gib_per_second": 0.668,
+          "read_amplification": 1.27,
+          "process_cpu_percent": 476.6,
+          "samples": 10
+        },
+        {
+          "configuration": "TileDB 4096 cold",
+          "backend": "tiledb",
+          "tile_extent_rows": 4096,
+          "cache_mode": "cold",
+          "pattern": "locality",
+          "batch_size": 65536,
+          "latency_p50_ms": 64.346,
+          "latency_p95_ms": 77.041,
+          "useful_gib_per_second": 0.482,
+          "storage_read_gib_per_second": 1.03,
+          "read_amplification": 2.14,
+          "process_cpu_percent": 464.3,
+          "samples": 10
+        },
+        {
+          "configuration": "TileDB 65536 cold",
+          "backend": "tiledb",
+          "tile_extent_rows": 65536,
+          "cache_mode": "cold",
+          "pattern": "locality",
+          "batch_size": 65536,
+          "latency_p50_ms": 228.582,
+          "latency_p95_ms": 259.694,
+          "useful_gib_per_second": 0.1375,
+          "storage_read_gib_per_second": 2.308,
+          "read_amplification": 16.79,
+          "process_cpu_percent": 423.9,
+          "samples": 10
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "benchmark_json",
+      "label": "8 GiB WholeMemory feature-fetch benchmark",
+      "path": "nvme_benchmark_results/20260821-gb10/final-8g.json",
+      "query": {
+        "engine": "duckdb",
+        "sql": "SELECT result.* FROM read_json_auto('nvme_benchmark_results/20260821-gb10/final-8g.json') AS benchmark, UNNEST(benchmark.results) AS rows(result)",
+        "description": "Loads all raw benchmark rows; the checked-in Python summarizer validates and transforms them into the report datasets.",
+        "executed_at": "2026-08-21T23:29:36Z",
+        "language": "sql",
+        "tables_used": [
+          "nvme_benchmark_results/20260821-gb10/final-8g.json"
+        ],
+        "filters": [
+          "single node and single GPU",
+          "float32 features with 128 values per row",
+          "10 measured repetitions after 3 warmups"
+        ],
+        "metric_definitions": [
+          "Useful GiB/s = requested rows \u00d7 512 bytes \u00f7 measured wall time \u00f7 2^30.",
+          "Read amplification = process block-read bytes \u00f7 requested feature bytes."
+        ]
+      }
+    }
+  ]
+}
