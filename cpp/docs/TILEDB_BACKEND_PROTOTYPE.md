@@ -35,14 +35,15 @@ file into this schema:
 
 ```bash
 wholememory_tiledb_ingest \
-  /mnt/nvme/features/rank_0.tdb rank_0.bin 10000000 512 4096
+  /mnt/nvme/features/rank_0.tdb rank_0.bin 10000000 512 4096 1048576 0
 ```
 
 The arguments after the input file are row count, bytes per row, and optional TileDB tile extent in
-rows. The optional final argument is the number of rows written per query. Create one array for each
-rank using the same partitioning passed to WholeMemory. Tile extent is a workload parameter, not a
-universal constant: small extents reduce amplification for random gathers; larger extents improve
-sequential bandwidth and metadata efficiency.
+rows. The next optional argument is the number of rows written per query. The final `0` or `1`
+controls whether the resulting fragments are consolidated and vacuumed. Create one array for each
+rank using the same partitioning passed to WholeMemory. Tile extent and consolidation are workload
+parameters, not universal defaults: small extents reduce amplification for random gathers; larger
+extents improve sequential bandwidth and metadata efficiency.
 
 ## Python usage
 
@@ -101,7 +102,9 @@ memory. A later optimization can chunk TileDB reads and communication to bound t
 - One array per global communicator rank. A node-shared array/local-communicator topology is a
   follow-up once the basic I/O path is measured.
 - The TileDB query is synchronous with respect to the current CUDA stream. Overlap, prefetching,
-  persistent pinned pools, and bounded chunking are follow-up performance work.
+  persistent pinned pools, and overlapped I/O/copies are follow-up performance work. Experimental
+  bounded TileDB queries can be selected when creating a handle by setting
+  `WHOLEMEMORY_TILEDB_QUERY_CHUNK_ROWS`; zero or an unset variable preserves the unbounded default.
 - Array schema is checked through query success and returned byte count. Rich up-front schema
   diagnostics can be added after the storage format stabilizes.
 
@@ -116,3 +119,9 @@ extents. Capture application throughput, p50/p95 gather latency, NVMe bytes/read
 utilization, TileDB internal stats, H2D bandwidth, peak pinned memory, and peak device staging
 memory. Compare with the pinned-CPU and internal NVMe implementations using identical partitions and
 id traces.
+
+`python/pylibwholegraph/benchmarks/tiledb_feature_fetch_benchmark.py` supports multiple local GPU
+ranks, raw sample retention, block-device counters, TileDB statistics, staging phase timings,
+recorded `.npy` ID traces, consolidated arrays, and query-chunk sweeps. Aggregate latency is the
+slowest rank in each synchronized sample; aggregate throughput counts requested bytes from all
+ranks.

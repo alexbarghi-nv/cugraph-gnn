@@ -9,6 +9,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <stdexcept>
 #include <string>
@@ -80,6 +81,17 @@ class temporary_feature_array {
   std::string uri_;
 };
 
+class scoped_query_chunk_rows {
+ public:
+  explicit scoped_query_chunk_rows(char const* value)
+  {
+    if (setenv("WHOLEMEMORY_TILEDB_QUERY_CHUNK_ROWS", value, 1) != 0) {
+      throw std::runtime_error("could not set TileDB query chunk environment variable");
+    }
+  }
+  ~scoped_query_chunk_rows() { unsetenv("WHOLEMEMORY_TILEDB_QUERY_CHUNK_ROWS"); }
+};
+
 TEST(TileDBStorage, PreservesRequestOrderDuplicatesAndColumnSlices)
 {
   temporary_feature_array array;
@@ -121,6 +133,32 @@ TEST(TileDBStorage, AcceptsGlobalIdsForALocalPartition)
 
   EXPECT_EQ(output[0], (std::array<int32_t, 2>{20, 21}));
   EXPECT_EQ(output[1], (std::array<int32_t, 2>{0, 1}));
+}
+
+TEST(TileDBStorage, BoundedQueriesPreserveOrderingAndDuplicates)
+{
+  temporary_feature_array array;
+  scoped_query_chunk_rows chunk_rows("2");
+  wholememory::tiledb_read_only_storage storage(array.uri(), sizeof(std::array<int32_t, 2>), 5);
+  std::array<int64_t, 5> ids{4, 1, 4, 0, 2};
+  std::vector<unsigned char> raw(ids.size() * storage.row_bytes());
+  std::array<std::array<int32_t, 2>, 5> output{};
+
+  storage.read_rows(ids.data(),
+                    WHOLEMEMORY_DT_INT64,
+                    ids.size(),
+                    0,
+                    0,
+                    storage.row_bytes(),
+                    raw.data(),
+                    raw.size(),
+                    output.data());
+
+  EXPECT_EQ(output[0], (std::array<int32_t, 2>{40, 41}));
+  EXPECT_EQ(output[1], (std::array<int32_t, 2>{10, 11}));
+  EXPECT_EQ(output[2], (std::array<int32_t, 2>{40, 41}));
+  EXPECT_EQ(output[3], (std::array<int32_t, 2>{0, 1}));
+  EXPECT_EQ(output[4], (std::array<int32_t, 2>{20, 21}));
 }
 
 }  // namespace

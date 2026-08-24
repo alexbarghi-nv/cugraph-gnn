@@ -82,6 +82,18 @@ enum LogLevel {
   LEVEL_TRACE      /*!< Trace */
 };
 
+/** Diagnostic timings for the most recent TileDB gather on the calling host thread. */
+typedef struct wholememory_tiledb_gather_metrics_t {
+  int valid;
+  double staging_allocation_ms;
+  double indices_d2h_ms;
+  double tiledb_read_ms;
+  double rows_h2d_ms;
+  size_t index_bytes;
+  size_t raw_staging_bytes;
+  size_t output_bytes;
+} wholememory_tiledb_gather_metrics_t;
+
 #define WHOLEMEMORY_SPILT_NO_COLOR -1
 /**
  * Initialize WholeMemory library
@@ -442,6 +454,13 @@ wholememory_error_code_t wholememory_get_rank_partition_offsets(
  * @return : CUDA device count, -1 on error
  */
 int fork_get_device_count();
+
+/**
+ * Return diagnostic timings for the calling thread's most recent TileDB gather.
+ * The returned structure has valid=0 if that gather did not use TileDB.
+ */
+wholememory_error_code_t wholememory_get_last_tiledb_gather_metrics(
+  wholememory_tiledb_gather_metrics_t* metrics);
 
 /**
  * Load WholeMemory from binary files, all rank should be called together

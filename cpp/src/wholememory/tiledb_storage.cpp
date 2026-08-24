@@ -7,6 +7,8 @@
 #include <tiledb/tiledb.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <mutex>
@@ -43,11 +45,29 @@ int64_t get_id(const void* ids, wholememory_dtype_t dtype, size_t index)
   }
 }
 
+size_t query_chunk_rows_from_environment()
+{
+  auto const* value = std::getenv("WHOLEMEMORY_TILEDB_QUERY_CHUNK_ROWS");
+  if (value == nullptr || value[0] == '\0' || std::strcmp(value, "0") == 0) { return 0; }
+  errno          = 0;
+  char* end      = nullptr;
+  auto const raw = std::strtoull(value, &end, 10);
+  if (errno != 0 || end == value || *end != '\0' || raw == 0 ||
+      raw > std::numeric_limits<size_t>::max()) {
+    throw std::invalid_argument(
+      "WHOLEMEMORY_TILEDB_QUERY_CHUNK_ROWS must be zero or a positive integer");
+  }
+  return static_cast<size_t>(raw);
+}
+
 }  // namespace
 
 struct tiledb_read_only_storage::impl {
   impl(std::string array_uri, size_t bytes_per_row, int64_t rows)
-    : uri(std::move(array_uri)), row_bytes(bytes_per_row), row_count(rows)
+    : uri(std::move(array_uri)),
+      row_bytes(bytes_per_row),
+      row_count(rows),
+      query_chunk_rows(query_chunk_rows_from_environment())
   {
     if (uri.empty()) { throw std::invalid_argument("TileDB array URI must not be empty"); }
     if (row_bytes == 0) { throw std::invalid_argument("TileDB row size must be nonzero"); }
@@ -81,6 +101,7 @@ struct tiledb_read_only_storage::impl {
   std::string uri;
   size_t row_bytes;
   int64_t row_count;
+  size_t query_chunk_rows;
   tiledb_ctx_t* ctx     = nullptr;
   tiledb_array_t* array = nullptr;
   mutable std::mutex query_mutex;
@@ -145,56 +166,65 @@ void tiledb_read_only_storage::read_rows(const void* ids,
     }
   }
 
-  tiledb_query_t* query       = nullptr;
-  tiledb_subarray_t* subarray = nullptr;
   // TileDB contexts can service concurrent work, but the array object is shared by this handle.
   // Serialize query setup/submission until per-thread array handles are justified by measurements.
   std::scoped_lock query_lock(impl_->query_mutex);
-  try {
-    check_tiledb(
-      tiledb_query_alloc(impl_->ctx, impl_->array, TILEDB_READ, &query), impl_->ctx, "query alloc");
-    check_tiledb(
-      tiledb_query_set_layout(impl_->ctx, query, TILEDB_ROW_MAJOR), impl_->ctx, "query layout");
-    check_tiledb(
-      tiledb_subarray_alloc(impl_->ctx, impl_->array, &subarray), impl_->ctx, "subarray alloc");
-
-    // Coalesce adjacent point ids. TileDB operates on tiles, so ranges avoid needless query-range
-    // metadata while still returning rows in ascending order.
-    for (size_t begin = 0; begin < unique_ids.size();) {
-      size_t end = begin;
-      while (end + 1 < unique_ids.size() && unique_ids[end + 1] == unique_ids[end] + 1) {
-        ++end;
-      }
-      auto const range_start = unique_ids[begin];
-      auto const range_end   = unique_ids[end];
+  auto const query_chunk_rows = impl_->query_chunk_rows == 0
+                                  ? unique_ids.size()
+                                  : std::min(impl_->query_chunk_rows, unique_ids.size());
+  for (size_t chunk_begin = 0; chunk_begin < unique_ids.size(); chunk_begin += query_chunk_rows) {
+    auto const chunk_end        = std::min(chunk_begin + query_chunk_rows, unique_ids.size());
+    tiledb_query_t* query       = nullptr;
+    tiledb_subarray_t* subarray = nullptr;
+    try {
+      check_tiledb(tiledb_query_alloc(impl_->ctx, impl_->array, TILEDB_READ, &query),
+                   impl_->ctx,
+                   "query alloc");
       check_tiledb(
-        tiledb_subarray_add_range(impl_->ctx, subarray, 0, &range_start, &range_end, nullptr),
+        tiledb_query_set_layout(impl_->ctx, query, TILEDB_ROW_MAJOR), impl_->ctx, "query layout");
+      check_tiledb(
+        tiledb_subarray_alloc(impl_->ctx, impl_->array, &subarray), impl_->ctx, "subarray alloc");
+
+      // Coalesce adjacent point ids. TileDB operates on tiles, so ranges avoid needless query-range
+      // metadata while still returning rows in ascending order.
+      for (size_t begin = chunk_begin; begin < chunk_end;) {
+        size_t end = begin;
+        while (end + 1 < chunk_end && unique_ids[end + 1] == unique_ids[end] + 1) {
+          ++end;
+        }
+        auto const range_start = unique_ids[begin];
+        auto const range_end   = unique_ids[end];
+        check_tiledb(
+          tiledb_subarray_add_range(impl_->ctx, subarray, 0, &range_start, &range_end, nullptr),
+          impl_->ctx,
+          "add row range");
+        begin = end + 1;
+      }
+
+      check_tiledb(
+        tiledb_query_set_subarray_t(impl_->ctx, query, subarray), impl_->ctx, "set subarray");
+      auto* chunk_output = static_cast<unsigned char*>(raw_rows) + chunk_begin * impl_->row_bytes;
+      uint64_t result_bytes = (chunk_end - chunk_begin) * impl_->row_bytes;
+      check_tiledb(
+        tiledb_query_set_data_buffer(impl_->ctx, query, "values", chunk_output, &result_bytes),
         impl_->ctx,
-        "add row range");
-      begin = end + 1;
-    }
+        "set values buffer");
+      check_tiledb(tiledb_query_submit(impl_->ctx, query), impl_->ctx, "query submit");
 
-    check_tiledb(
-      tiledb_query_set_subarray_t(impl_->ctx, query, subarray), impl_->ctx, "set subarray");
-    uint64_t result_bytes = unique_ids.size() * impl_->row_bytes;
-    check_tiledb(tiledb_query_set_data_buffer(impl_->ctx, query, "values", raw_rows, &result_bytes),
-                 impl_->ctx,
-                 "set values buffer");
-    check_tiledb(tiledb_query_submit(impl_->ctx, query), impl_->ctx, "query submit");
-
-    tiledb_query_status_t status = TILEDB_UNINITIALIZED;
-    check_tiledb(tiledb_query_get_status(impl_->ctx, query, &status), impl_->ctx, "query status");
-    auto const expected_bytes = unique_ids.size() * impl_->row_bytes;
-    if (status != TILEDB_COMPLETED || result_bytes != expected_bytes) {
-      throw std::runtime_error("TileDB query did not return every requested feature row");
+      tiledb_query_status_t status = TILEDB_UNINITIALIZED;
+      check_tiledb(tiledb_query_get_status(impl_->ctx, query, &status), impl_->ctx, "query status");
+      auto const expected_bytes = (chunk_end - chunk_begin) * impl_->row_bytes;
+      if (status != TILEDB_COMPLETED || result_bytes != expected_bytes) {
+        throw std::runtime_error("TileDB query did not return every requested feature row");
+      }
+    } catch (...) {
+      if (subarray != nullptr) { tiledb_subarray_free(&subarray); }
+      if (query != nullptr) { tiledb_query_free(&query); }
+      throw;
     }
-  } catch (...) {
-    if (subarray != nullptr) { tiledb_subarray_free(&subarray); }
-    if (query != nullptr) { tiledb_query_free(&query); }
-    throw;
+    tiledb_subarray_free(&subarray);
+    tiledb_query_free(&query);
   }
-  tiledb_subarray_free(&subarray);
-  tiledb_query_free(&query);
 
   auto const* raw        = static_cast<unsigned char const*>(raw_rows);
   auto* dst              = static_cast<unsigned char*>(output);

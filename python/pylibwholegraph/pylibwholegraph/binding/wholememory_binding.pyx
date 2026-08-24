@@ -161,6 +161,19 @@ cdef extern from "wholememory/wholememory.h":
 
     cdef int fork_get_device_count()
 
+    cdef struct wholememory_tiledb_gather_metrics_t:
+        int valid
+        double staging_allocation_ms
+        double indices_d2h_ms
+        double tiledb_read_ms
+        double rows_h2d_ms
+        size_t index_bytes
+        size_t raw_staging_bytes
+        size_t output_bytes
+
+    cdef wholememory_error_code_t wholememory_get_last_tiledb_gather_metrics(
+        wholememory_tiledb_gather_metrics_t* metrics)
+
     cdef wholememory_error_code_t wholememory_load_from_file(wholememory_handle_t wholememory_handle,
                                                              size_t memory_offset,
                                                              size_t memory_entry_size,
@@ -1020,6 +1033,21 @@ def init(unsigned int flags, LogLevel log_level = LEVEL_INFO):
 
 def finalize():
     check_wholememory_error_code(wholememory_finalize())
+
+def get_last_tiledb_gather_metrics():
+    """Return phase timings for this thread's most recent TileDB gather."""
+    cdef wholememory_tiledb_gather_metrics_t metrics
+    check_wholememory_error_code(wholememory_get_last_tiledb_gather_metrics(&metrics))
+    return {
+        "valid": metrics.valid != 0,
+        "staging_allocation_ms": metrics.staging_allocation_ms,
+        "indices_d2h_ms": metrics.indices_d2h_ms,
+        "tiledb_read_ms": metrics.tiledb_read_ms,
+        "rows_h2d_ms": metrics.rows_h2d_ms,
+        "index_bytes": metrics.index_bytes,
+        "raw_staging_bytes": metrics.raw_staging_bytes,
+        "output_bytes": metrics.output_bytes,
+    }
 
 def create_unique_id():
     py_uid = PyWholeMemoryUniqueID()

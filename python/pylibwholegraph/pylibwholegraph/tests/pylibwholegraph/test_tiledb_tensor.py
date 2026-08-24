@@ -27,16 +27,21 @@ def tiledb_routine(world_rank: int, world_size: int):
 
     with tempfile.TemporaryDirectory(prefix="wholememory_tiledb_python_") as root:
         root = Path(root)
-        values = np.arange(10, dtype=np.float32).reshape(5, 2)
+        rows_per_rank = 5
+        total_rows = rows_per_rank * world_size
+        first_value = world_rank * rows_per_rank * 2
+        values = np.arange(
+            first_value, first_value + rows_per_rank * 2, dtype=np.float32
+        ).reshape(rows_per_rank, 2)
         raw_path = root / "features.bin"
-        array_path = root / "rank_0.tdb"
+        array_path = root / f"rank_{world_rank}.tdb"
         values.tofile(raw_path)
         subprocess.run(
             [
                 "wholememory_tiledb_ingest",
                 str(array_path),
                 str(raw_path),
-                "5",
+                str(rows_per_rank),
                 str(values[0].nbytes),
                 "2",
                 "5",
@@ -49,26 +54,43 @@ def tiledb_routine(world_rank: int, world_size: int):
         tensor = wgth.create_wholememory_tensor_from_tiledb(
             comm,
             str(root / "rank_{rank}.tdb"),
-            [5, 2],
+            [total_rows, 2],
             torch.float32,
-            tensor_entry_partition=[5],
+            tensor_entry_partition=[rows_per_rank] * world_size,
         )
-        indices = torch.tensor([4, 0, 4, 2], dtype=torch.int64, device="cuda")
+        requested_rows = [rank * rows_per_rank for rank in range(world_size)]
+        requested_rows.extend([total_rows - 1, 0])
+        indices = torch.tensor(requested_rows, dtype=torch.int64, device="cuda")
+        global_values = torch.arange(total_rows * 2, dtype=torch.float32).reshape(
+            total_rows, 2
+        )
+        gathered = tensor.gather(indices)
         torch.testing.assert_close(
-            tensor.gather(indices).cpu(),
-            torch.from_numpy(values)[indices.cpu()],
+            gathered.cpu(),
+            global_values[indices.cpu()],
             rtol=0,
             atol=0,
         )
+        metrics = wmb.get_last_tiledb_gather_metrics()
+        assert metrics["valid"]
+        assert metrics["index_bytes"] > 0
+        assert metrics["raw_staging_bytes"] > 0
+        assert metrics["output_bytes"] > 0
+        assert metrics["tiledb_read_ms"] >= 0
         with pytest.raises(NotImplementedError, match="^Not supported$"):
             tensor.get_local_tensor()
 
-        for partition in ([4], [0], [2, 3]):
+        invalid_partitions = (
+            [rows_per_rank - 1] + [rows_per_rank] * (world_size - 1),
+            [0] + [rows_per_rank] * (world_size - 1),
+            [rows_per_rank] * (world_size + 1),
+        )
+        for partition in invalid_partitions:
             with pytest.raises(ValueError):
                 wgth.create_wholememory_tensor_from_tiledb(
                     comm,
                     str(root / "rank_{rank}.tdb"),
-                    [5, 2],
+                    [total_rows, 2],
                     torch.float32,
                     tensor_entry_partition=partition,
                 )
@@ -84,5 +106,8 @@ def tiledb_routine(world_rank: int, world_size: int):
     reason="wholememory_tiledb_ingest is not installed",
 )
 def test_tiledb_list_partition_and_local_mapping():
-    assert wmb.fork_get_gpu_count() > 0
-    multiprocess_run(1, tiledb_routine, inline_single_process=True)
+    gpu_count = wmb.fork_get_gpu_count()
+    assert gpu_count > 0
+    world_size = int(os.getenv("TEST_WM_TILEDB_WORLD_SIZE", "1"))
+    assert 0 < world_size <= gpu_count
+    multiprocess_run(world_size, tiledb_routine, inline_single_process=True)

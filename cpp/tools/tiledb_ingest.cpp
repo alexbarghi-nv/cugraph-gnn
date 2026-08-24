@@ -41,6 +41,14 @@ uint64_t parse_positive(char const* value, char const* name)
   return result;
 }
 
+bool parse_boolean(char const* value, char const* name)
+{
+  std::string const parsed(value);
+  if (parsed == "0" || parsed == "false" || parsed == "off") { return false; }
+  if (parsed == "1" || parsed == "true" || parsed == "on") { return true; }
+  throw std::invalid_argument(std::string(name) + " must be 0/1, false/true, or off/on");
+}
+
 void create_array(tiledb_ctx_t* ctx,
                   std::string const& uri,
                   int64_t row_count,
@@ -143,9 +151,10 @@ void ingest(tiledb_ctx_t* ctx,
 
 int main(int argc, char** argv)
 {
-  if (argc < 5 || argc > 7) {
+  if (argc < 5 || argc > 8) {
     std::cerr << "Usage: " << argv[0]
-              << " ARRAY_URI RAW_FILE ROW_COUNT ROW_BYTES [TILE_ROWS=4096] [CHUNK_ROWS=1048576]\n";
+              << " ARRAY_URI RAW_FILE ROW_COUNT ROW_BYTES [TILE_ROWS=4096] [CHUNK_ROWS=1048576]"
+                 " [CONSOLIDATE=0]\n";
     return 2;
   }
   try {
@@ -155,6 +164,7 @@ int main(int argc, char** argv)
     auto const row_bytes_u64    = parse_positive(argv[4], "ROW_BYTES");
     auto const tile_rows_u64    = argc >= 6 ? parse_positive(argv[5], "TILE_ROWS") : 4096;
     auto const chunk_rows_u64   = argc >= 7 ? parse_positive(argv[6], "CHUNK_ROWS") : 1048576;
+    auto const consolidate      = argc >= 8 ? parse_boolean(argv[7], "CONSOLIDATE") : false;
     if (row_count_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
         row_bytes_u64 > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) ||
         tile_rows_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
@@ -188,13 +198,17 @@ int main(int argc, char** argv)
              static_cast<int64_t>(row_count_u64),
              static_cast<size_t>(row_bytes_u64),
              static_cast<size_t>(chunk_rows_u64));
+      if (consolidate) {
+        check(tiledb_array_consolidate(ctx, uri.c_str(), nullptr), ctx, "consolidate array");
+        check(tiledb_array_vacuum(ctx, uri.c_str(), nullptr), ctx, "vacuum array");
+      }
     } catch (...) {
       tiledb_ctx_free(&ctx);
       throw;
     }
     tiledb_ctx_free(&ctx);
     std::cout << "Created " << uri << " with " << row_count_u64 << " rows of " << row_bytes_u64
-              << " bytes\n";
+              << " bytes" << (consolidate ? " (consolidated)" : "") << '\n';
     return 0;
   } catch (std::exception const& error) {
     std::cerr << "wholememory_tiledb_ingest: " << error.what() << '\n';

@@ -4,6 +4,8 @@
  */
 #include <cuda_runtime_api.h>
 
+#include <chrono>
+
 #include <wholememory/env_func_ptrs.h>
 #include <wholememory/wholememory.h>
 
@@ -18,6 +20,26 @@
 #include "wholememory_ops/temp_memory_handle.hpp"
 #include "wholememory_ops/thrust_allocator.hpp"
 
+namespace {
+
+thread_local wholememory_tiledb_gather_metrics_t last_tiledb_gather_metrics{};
+
+double elapsed_ms(std::chrono::steady_clock::time_point start)
+{
+  return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+    .count();
+}
+
+}  // namespace
+
+extern "C" wholememory_error_code_t wholememory_get_last_tiledb_gather_metrics(
+  wholememory_tiledb_gather_metrics_t* metrics)
+{
+  if (metrics == nullptr) { return WHOLEMEMORY_INVALID_INPUT; }
+  *metrics = last_tiledb_gather_metrics;
+  return WHOLEMEMORY_SUCCESS;
+}
+
 namespace wholememory_ops {
 
 wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememory_handle,
@@ -31,6 +53,7 @@ wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememor
                                                  int gather_sms)
 {
   try {
+    last_tiledb_gather_metrics = {};
     if (wholememory_desc.storage_offset < 0 ||
         wholememory_desc.storage_offset + wholememory_desc.sizes[1] > wholememory_desc.stride) {
       return WHOLEMEMORY_INVALID_INPUT;
@@ -121,6 +144,8 @@ wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememor
         WHOLEMEMORY_ERROR("TileDB gather does not yet support output dtype conversion");
         return WHOLEMEMORY_NOT_SUPPORTED;
       }
+      last_tiledb_gather_metrics.valid = 1;
+      auto phase_start                 = std::chrono::steady_clock::now();
       temp_memory_handle host_tiledb_indices(p_env_fns);
       temp_memory_handle host_tiledb_raw_rows(p_env_fns);
       temp_memory_handle host_tiledb_gather_rows(p_env_fns);
@@ -130,10 +155,13 @@ wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememor
         total_recv_count * embedding_entry_size, WHOLEMEMORY_DT_INT8);
       void* host_tiledb_gather_rows_ptr = host_tiledb_gather_rows.pinned_malloc(
         total_recv_count * wholememory_desc.sizes[1], output_desc.dtype);
+      last_tiledb_gather_metrics.staging_allocation_ms = elapsed_ms(phase_start);
 
       auto const index_bytes =
         total_recv_count * wholememory_dtype_get_element_size(indice_desc.dtype);
+      last_tiledb_gather_metrics.index_bytes = index_bytes;
       if (index_bytes > 0) {
+        phase_start = std::chrono::steady_clock::now();
         WM_CUDA_CHECK(cudaMemcpyAsync(host_tiledb_indices_ptr,
                                       dev_recv_indice_buffer.pointer(),
                                       index_bytes,
@@ -141,10 +169,13 @@ wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememor
                                       stream));
         // TileDB is a CPU API and must not observe the ids until bucket/exchange and D2H finish.
         WM_CUDA_CHECK(cudaStreamSynchronize(stream));
+        last_tiledb_gather_metrics.indices_d2h_ms = elapsed_ms(phase_start);
       }
 
       auto const output_row_bytes =
         wholememory_desc.sizes[1] * wholememory_dtype_get_element_size(output_desc.dtype);
+      last_tiledb_gather_metrics.raw_staging_bytes = total_recv_count * embedding_entry_size;
+      phase_start                                  = std::chrono::steady_clock::now();
       WHOLEMEMORY_RETURN_ON_FAIL(
         wholememory::tiledb_read_rows_from_handle(wholememory_handle,
                                                   host_tiledb_indices_ptr,
@@ -155,9 +186,12 @@ wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememor
                                                   host_tiledb_raw_rows_ptr,
                                                   total_recv_count * embedding_entry_size,
                                                   host_tiledb_gather_rows_ptr));
+      last_tiledb_gather_metrics.tiledb_read_ms = elapsed_ms(phase_start);
 
-      auto const gather_bytes = total_recv_count * output_row_bytes;
+      auto const gather_bytes                 = total_recv_count * output_row_bytes;
+      last_tiledb_gather_metrics.output_bytes = gather_bytes;
       if (gather_bytes > 0) {
+        phase_start = std::chrono::steady_clock::now();
         WM_CUDA_CHECK(cudaMemcpyAsync(dev_local_gather_buffer_ptr,
                                       host_tiledb_gather_rows_ptr,
                                       gather_bytes,
@@ -166,6 +200,7 @@ wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememor
         // Keep the pinned allocation alive through the copy. NCCL remains ordered after it on the
         // same stream, and receives into the existing device buffer.
         WM_CUDA_CHECK(cudaStreamSynchronize(stream));
+        last_tiledb_gather_metrics.rows_h2d_ms = elapsed_ms(phase_start);
       }
     } else {
       void* local_fake_ptr = nullptr;

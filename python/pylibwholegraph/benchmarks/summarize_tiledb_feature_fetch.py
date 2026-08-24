@@ -18,18 +18,34 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("artifact", type=Path)
     parser.add_argument(
         "--source-path",
-        default="nvme_benchmark_results/20260821-gb10/final-8g.json",
+        help="Repository-relative source label; defaults to the results argument",
     )
     return parser.parse_args()
 
 
 def validate(rows: list[dict[str, Any]], metadata: dict[str, Any]) -> None:
-    if len(rows) != 48:
-        raise ValueError(f"expected 48 benchmark rows, found {len(rows)}")
+    query_chunks = metadata.get("query_chunk_rows", [0])
+    pattern_count = len(metadata.get("patterns", ["random", "locality"]))
+    resident_backends = sum(
+        any(row["backend"] == backend for row in rows) for backend in ("cuda", "cpu")
+    )
+    tiledb_enabled = any(row["backend"] == "tiledb" for row in rows)
+    expected_rows = resident_backends * pattern_count * len(metadata["batch_sizes"])
+    if tiledb_enabled:
+        expected_rows += (
+            len(metadata["tile_extents"])
+            * len(query_chunks)
+            * 2
+            * pattern_count
+            * len(metadata["batch_sizes"])
+        )
+    if len(rows) != expected_rows:
+        raise ValueError(f"expected {expected_rows} benchmark rows, found {len(rows)}")
     keys = {
         (
             row["backend"],
             row["tile_extent_rows"],
+            row.get("query_chunk_rows", 0),
             row["cache_mode"],
             row["pattern"],
             row["batch_size"],
@@ -38,8 +54,8 @@ def validate(rows: list[dict[str, Any]], metadata: dict[str, Any]) -> None:
     }
     if len(keys) != len(rows):
         raise ValueError("benchmark configuration keys are not unique")
-    if metadata["dataset_gib"] != 8.0 or metadata["rows"] != 16_777_216:
-        raise ValueError("this report expects the validated 8 GiB benchmark")
+    if metadata["dataset_gib"] <= 0 or metadata["rows"] <= 0:
+        raise ValueError("dataset size must be positive")
 
     for row in rows:
         if row["samples"] != metadata["repetitions"]:
@@ -49,11 +65,6 @@ def validate(rows: list[dict[str, Any]], metadata: dict[str, Any]) -> None:
         expected = row["rows_per_second"] * metadata["width"] * 4 / 1024**3
         if abs(expected - row["useful_gib_per_second"]) > max(1e-9, expected * 1e-9):
             raise ValueError("useful-throughput calculation does not reconcile")
-        if row["backend"] in {"cuda", "cpu"} and row["storage_read_gib"] != 0:
-            raise ValueError("resident backend unexpectedly performed block I/O")
-        if row["backend"] == "tiledb" and row["cache_mode"] == "warm":
-            if row["storage_read_gib"] != 0:
-                raise ValueError("warm TileDB case unexpectedly performed block I/O")
         if row["backend"] == "tiledb" and row["cache_mode"] == "cold":
             if row["storage_read_gib"] <= 0:
                 raise ValueError("cold TileDB case did not perform block I/O")
@@ -67,6 +78,7 @@ def select(
     *,
     cache_mode: str | None = None,
     tile_extent: int | None = None,
+    query_chunk_rows: int = 0,
 ) -> dict[str, Any]:
     matches = [
         row
@@ -76,6 +88,7 @@ def select(
         and row["batch_size"] == batch_size
         and (cache_mode is None or row["cache_mode"] == cache_mode)
         and (tile_extent is None or row["tile_extent_rows"] == tile_extent)
+        and row.get("query_chunk_rows", 0) == query_chunk_rows
     ]
     if len(matches) != 1:
         raise ValueError(f"expected one row, found {len(matches)}")
@@ -87,6 +100,7 @@ def round_row(row: dict[str, Any], configuration: str) -> dict[str, Any]:
         "configuration": configuration,
         "backend": row["backend"],
         "tile_extent_rows": row["tile_extent_rows"],
+        "query_chunk_rows": row.get("query_chunk_rows", 0),
         "cache_mode": row["cache_mode"],
         "pattern": row["pattern"],
         "batch_size": row["batch_size"],
@@ -96,6 +110,9 @@ def round_row(row: dict[str, Any], configuration: str) -> dict[str, Any]:
         "storage_read_gib_per_second": round(row["storage_read_gib_per_second"], 3),
         "read_amplification": round(row["read_amplification"], 2),
         "process_cpu_percent": round(row["process_cpu_percent"], 1),
+        "indices_d2h_mean_ms": round(row.get("indices_d2h_mean_ms", 0.0), 3),
+        "tiledb_read_mean_ms": round(row.get("tiledb_read_mean_ms", 0.0), 3),
+        "rows_h2d_mean_ms": round(row.get("rows_h2d_mean_ms", 0.0), 3),
         "samples": row["samples"],
     }
 
@@ -103,20 +120,39 @@ def round_row(row: dict[str, Any], configuration: str) -> dict[str, Any]:
 def main() -> None:
     args = parse_args()
     document = json.loads(args.results.read_text())
+    source_path = args.source_path or str(args.results)
     metadata = document["metadata"]
     rows = document["results"]
     validate(rows, metadata)
 
-    batch = 65_536
+    batch = max(metadata["batch_sizes"])
+    world_size = metadata.get("world_size", 1)
+    query_chunk_rows = 0
     cuda_local = select(rows, "cuda", "locality", batch)
     cpu_local = select(rows, "cpu", "locality", batch)
     cpu_random = select(rows, "cpu", "random", batch)
     tile_local = [
-        select(rows, "tiledb", "locality", batch, cache_mode="cold", tile_extent=extent)
+        select(
+            rows,
+            "tiledb",
+            "locality",
+            batch,
+            cache_mode="cold",
+            tile_extent=extent,
+            query_chunk_rows=query_chunk_rows,
+        )
         for extent in metadata["tile_extents"]
     ]
     tile_random = [
-        select(rows, "tiledb", "random", batch, cache_mode="cold", tile_extent=extent)
+        select(
+            rows,
+            "tiledb",
+            "random",
+            batch,
+            cache_mode="cold",
+            tile_extent=extent,
+            query_chunk_rows=query_chunk_rows,
+        )
         for extent in metadata["tile_extents"]
     ]
     best_local = max(tile_local, key=lambda row: row["useful_gib_per_second"])
@@ -129,6 +165,29 @@ def main() -> None:
         ),
         key=lambda row: row["storage_read_gib_per_second"],
     )
+    cold_tiledb = [
+        row
+        for row in rows
+        if row["backend"] == "tiledb"
+        and row["cache_mode"] == "cold"
+        and row.get("query_chunk_rows", 0) == query_chunk_rows
+    ]
+    min_random_amplification = min(
+        row["read_amplification"] for row in cold_tiledb if row["pattern"] == "random"
+    )
+    max_random_amplification = max(
+        row["read_amplification"] for row in cold_tiledb if row["pattern"] == "random"
+    )
+    locality_slowdown = (
+        cpu_local["useful_gib_per_second"] / best_local["useful_gib_per_second"]
+    )
+    random_slowdown = (
+        cpu_random["useful_gib_per_second"] / best_random["useful_gib_per_second"]
+    )
+    gpu_names = metadata.get("gpus", [metadata.get("gpu", "unknown GPU")])
+    gpu_description = gpu_names[0]
+    if len(set(gpu_names)) > 1:
+        gpu_description = ", ".join(sorted(set(gpu_names)))
 
     summary = [
         {
@@ -169,6 +228,7 @@ def main() -> None:
                 current_batch,
                 cache_mode="cold",
                 tile_extent=extent,
+                query_chunk_rows=query_chunk_rows,
             )
             item = round_row(row, f"TileDB {extent}")
             item["batch_label"] = f"{current_batch:,} rows"
@@ -192,6 +252,7 @@ def main() -> None:
                     batch,
                     cache_mode="cold",
                     tile_extent=extent,
+                    query_chunk_rows=query_chunk_rows,
                 ),
                 f"TileDB {extent} cold",
             )
@@ -206,13 +267,13 @@ def main() -> None:
     )
     source = {
         "id": "benchmark_json",
-        "label": "8 GiB WholeMemory feature-fetch benchmark",
-        "path": args.source_path,
+        "label": f"{metadata['dataset_gib']:g} GiB WholeMemory feature-fetch benchmark",
+        "path": source_path,
         "query": {
             "engine": "duckdb",
             "sql": (
                 "SELECT result.* FROM read_json_auto('"
-                f"{args.source_path}') AS benchmark, "
+                f"{source_path}') AS benchmark, "
                 "UNNEST(benchmark.results) AS rows(result)"
             ),
             "description": (
@@ -221,27 +282,27 @@ def main() -> None:
             ),
             "executed_at": generated_at,
             "language": "sql",
-            "tables_used": [args.source_path],
+            "tables_used": [source_path],
             "filters": [
-                "single node and single GPU",
-                "float32 features with 128 values per row",
-                "10 measured repetitions after 3 warmups",
+                f"single node and {world_size} GPU rank(s)",
+                f"float32 features with {metadata['width']} values per row",
+                f"{metadata['repetitions']} measured repetitions after {metadata['warmup']} warmups",
             ],
             "metric_definitions": [
                 "Useful GiB/s = requested rows × 512 bytes ÷ measured wall time ÷ 2^30.",
-                "Read amplification = process block-read bytes ÷ requested feature bytes.",
+                "Read amplification = measured block-device bytes (or process reads when unavailable) ÷ requested feature bytes.",
             ],
         },
     }
 
-    title = "WholeMemory TileDB NVMe Feature-Fetch Benchmark"
+    title = f"WholeMemory TileDB NVMe Feature-Fetch Benchmark ({world_size} GPU rank{'s' if world_size != 1 else ''})"
     artifact = {
         "surface": "report",
         "manifest": {
             "version": 1,
             "surface": "report",
             "title": title,
-            "description": "Single-GPU comparison of TileDB NVMe, pinned CPU, and CUDA feature gathers.",
+            "description": f"{world_size}-GPU comparison of TileDB NVMe, pinned CPU, and CUDA feature gathers.",
             "generatedAt": generated_at,
             "cards": [
                 {
@@ -292,7 +353,7 @@ def main() -> None:
                 },
                 {
                     "id": "io_card",
-                    "description": "Peak observed process block-read rate in a cold TileDB case.",
+                    "description": "Peak observed block-device read rate in a cold TileDB case.",
                     "dataset": "summary",
                     "sourceId": "benchmark_json",
                     "metrics": [
@@ -398,7 +459,7 @@ def main() -> None:
                 {
                     "id": "detail_table",
                     "title": "65,536-row gather detail",
-                    "subtitle": "Resident baselines and cold TileDB, 10 samples per configuration.",
+                    "subtitle": f"Resident baselines and cold TileDB, {metadata['repetitions']} samples per configuration.",
                     "dataset": "detail",
                     "sourceId": "benchmark_json",
                     "defaultSort": {"field": "latency_p50_ms", "direction": "desc"},
@@ -441,6 +502,21 @@ def main() -> None:
                             "label": "Process CPU %",
                             "format": "number",
                         },
+                        {
+                            "field": "indices_d2h_mean_ms",
+                            "label": "IDs D2H ms",
+                            "format": "number",
+                        },
+                        {
+                            "field": "tiledb_read_mean_ms",
+                            "label": "TileDB + reorder ms",
+                            "format": "number",
+                        },
+                        {
+                            "field": "rows_h2d_mean_ms",
+                            "label": "Rows H2D ms",
+                            "format": "number",
+                        },
                     ],
                 }
             ],
@@ -453,10 +529,10 @@ def main() -> None:
                     "sourceId": "benchmark_json",
                     "body": (
                         "## Technical summary\n\n"
-                        "The TileDB prototype is functionally correct and drives the NVMe at up to **7.71 GiB/s**, "
-                        "but it is not competitive with resident WholeMemory backends for these gathers. At a 65,536-row batch, "
-                        "the best cold locality result is **0.525 GiB/s** versus **30.462 GiB/s** for pinned CPU, while the best cold random result is "
-                        "**0.0111 GiB/s** versus **7.648 GiB/s**. The dominant issue is read amplification and synchronous CPU-side query work, not raw NVMe bandwidth."
+                        f"The TileDB prototype is functionally correct and drives storage at up to **{peak_io['storage_read_gib_per_second']:.3f} GiB/s**, "
+                        f"but it is not competitive with resident WholeMemory backends for these gathers. At a {batch:,}-row batch, "
+                        f"the best cold locality result is **{best_local['useful_gib_per_second']:.4f} GiB/s** versus **{cpu_local['useful_gib_per_second']:.3f} GiB/s** for pinned CPU, while the best cold random result is "
+                        f"**{best_random['useful_gib_per_second']:.4f} GiB/s** versus **{cpu_random['useful_gib_per_second']:.3f} GiB/s**. The dominant issue is read amplification and synchronous CPU-side query work, not raw NVMe bandwidth."
                     ),
                 },
                 {
@@ -469,11 +545,11 @@ def main() -> None:
                     "type": "markdown",
                     "sourceId": "benchmark_json",
                     "body": (
-                        "## Locality helps, but the resident backends remain roughly 58–62× faster\n\n"
-                        "The 256-row TileDB extent is the best cold choice for the locality-biased 65,536-row trace: "
-                        "**56.35 ms p50**, **76.37 ms p95**, and **0.525 GiB/s** useful throughput. "
-                        "Pinned CPU completes the same trace in **1.025 ms p50** and CUDA in **0.959 ms p50**. "
-                        "Locality keeps TileDB read amplification near **1.27×**, so most of the remaining gap is query, sorting, copying, and synchronization overhead."
+                        f"## Locality helps, but pinned CPU remains {locality_slowdown:.1f}× faster\n\n"
+                        f"The {best_local['tile_extent_rows']:,}-row TileDB extent is the best cold choice for the locality-biased {batch:,}-row trace: "
+                        f"**{best_local['latency_p50_ms']:.3f} ms p50**, **{best_local['latency_p95_ms']:.3f} ms p95**, and **{best_local['useful_gib_per_second']:.4f} GiB/s** useful throughput. "
+                        f"Pinned CPU completes the same trace in **{cpu_local['latency_p50_ms']:.3f} ms p50** and CUDA in **{cuda_local['latency_p50_ms']:.3f} ms p50**. "
+                        f"TileDB read amplification is **{best_local['read_amplification']:.2f}×** in this case, so the remaining gap includes query, sorting, copying, routing, and synchronization overhead."
                     ),
                 },
                 {
@@ -488,9 +564,9 @@ def main() -> None:
                     "sourceId": "benchmark_json",
                     "body": (
                         "## Random gathers turn bandwidth into amplification\n\n"
-                        "Cold random traces read **253× to 16,069×** more bytes than requested. The fastest disk case reaches **7.71 GiB/s**, "
-                        "yet delivers only **0.0041 GiB/s** of requested features because its read amplification is **1,868×**. "
-                        "At 65,536 rows, even the best random TileDB configuration is about **687×** below pinned CPU useful throughput."
+                        f"Cold random traces read **{min_random_amplification:.1f}× to {max_random_amplification:.1f}×** more bytes than requested. "
+                        f"The fastest observed storage case reaches **{peak_io['storage_read_gib_per_second']:.3f} GiB/s**, while useful throughput remains constrained by amplification and query work. "
+                        f"At {batch:,} rows, even the best random TileDB configuration is **{random_slowdown:.1f}×** below pinned CPU useful throughput."
                     ),
                 },
                 {
@@ -520,10 +596,10 @@ def main() -> None:
                     "sourceId": "benchmark_json",
                     "body": (
                         "## Scope, data, and metric definitions\n\n"
-                        "The benchmark uses one NVIDIA GB10, one process/rank, an **8 GiB** synthetic table with **16,777,216 × 128 float32** values, "
+                        f"The benchmark uses {world_size} process/rank(s) on **{gpu_description}**, a **{metadata['dataset_gib']:g} GiB** synthetic table with **{metadata['rows']:,} × {metadata['width']} float32** values, "
                         "and identical seeded CUDA ID traces for all backends. `cpu` is WholeMemory distributed host memory allocated with `cudaMallocHost`; "
                         "`cuda` is WholeMemory distributed device memory; TileDB uses the branch's distributed NCCL gather path. "
-                        "Useful throughput counts only requested feature bytes. Read amplification divides Linux process block-read bytes by those useful bytes."
+                        "Useful throughput counts requested feature bytes across all ranks and uses the slowest synchronized rank latency. Read amplification uses block-device sectors when available, falling back to summed process reads."
                     ),
                 },
                 {
@@ -532,10 +608,10 @@ def main() -> None:
                     "sourceId": "benchmark_json",
                     "body": (
                         "## Methodology and robustness checks\n\n"
-                        "Each case has **3 warmups and 10 measured repetitions**; CUDA is synchronized around every gather. Cold TileDB samples issue "
+                        f"Each case has **{metadata['warmup']} warmups and {metadata['repetitions']} measured repetitions**; CUDA is synchronized around every gather. Cold TileDB samples issue "
                         "`POSIX_FADV_DONTNEED` for every array file before timing, and measured block reads confirm that I/O occurred. Warm TileDB files are read fully before timing, "
-                        "and every warm result records zero block reads. The suite covers random and 16-window locality traces, three batch sizes, and 256-, 4,096-, and 65,536-row tile extents. "
-                        "All 48 configuration keys are unique, p50 never exceeds p95, and useful-throughput calculations were independently recomputed."
+                        f"and their measured reads reveal whether they remained resident. The suite covers random and 16-window locality traces, {len(metadata['batch_sizes'])} batch sizes, and tile extents {metadata['tile_extents']}. "
+                        f"All {len(rows)} configuration keys are unique, p50 never exceeds p95, raw samples are retained, and useful-throughput calculations were independently recomputed."
                     ),
                 },
                 {
@@ -543,9 +619,9 @@ def main() -> None:
                     "type": "markdown",
                     "body": (
                         "## Limitations and omitted instrumentation\n\n"
-                        "This is a single-machine synthetic benchmark, not an application trace. `POSIX_FADV_DONTNEED` is advisory, although process I/O counters verify cold reads. "
-                        "Ten samples give a directional p95 rather than a production tail estimate. The current API does not expose TileDB internal statistics, isolated H2D bandwidth, "
-                        "or peak pinned/device staging memory, so those runbook metrics remain unmeasured. `torch` allocator peaks would not capture WholeMemory's C++ allocations, and GB10 NVML memory reporting is unavailable on this host."
+                        "This is a single-machine synthetic benchmark, not an application trace. `POSIX_FADV_DONTNEED` is advisory, and device counters can include unrelated host activity. "
+                        "The benchmark records TileDB statistics when requested, CUDA allocator and process-RSS observations, and staging-allocation, stream-wait/D2H, TileDB-read-plus-reorder, and H2D timings. It does not yet separate routing wait from D2H, query execution from CPU reorder, or NCCL phases. "
+                        "Torch allocator peaks may not capture allocations made outside its allocator."
                     ),
                 },
                 {
@@ -553,10 +629,10 @@ def main() -> None:
                     "type": "markdown",
                     "body": (
                         "## Recommended next steps\n\n"
-                        "1. Add bounded chunking and overlap TileDB reads, H2D copies, and NCCL communication; the current synchronous full-batch staging path serializes them.\n"
-                        "2. Reuse pinned buffers and query objects to reduce allocation and setup costs visible even in zero-I/O warm runs.\n"
-                        "3. Replace tile-amplified random access with a row-addressable/direct-I/O layout or an adaptive small-tile path; preserve the 256-row extent for locality-biased workloads.\n"
-                        "4. Expose TileDB stats and WholeMemory staging counters, then profile a representative GNN sampler trace with Nsight Systems before evaluating multi-GPU scale."
+                        "1. Compare unbounded and bounded query chunks, consolidated and unconsolidated arrays, and smaller tile extents before selecting a default.\n"
+                        "2. Use TileDB statistics and a representative sampler trace to explain amplification beyond tile granularity.\n"
+                        "3. Profile D2H, query, reorder, H2D, and NCCL phases with Nsight Systems before implementing overlap or persistent staging.\n"
+                        "4. If TileDB remains uncompetitive for random traces, compare it with a row-addressable direct-I/O layout."
                     ),
                 },
                 {

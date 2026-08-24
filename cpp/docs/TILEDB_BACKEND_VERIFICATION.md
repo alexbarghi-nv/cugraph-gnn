@@ -12,10 +12,11 @@ tested matrix, including cross-rank IDs, duplicates, empty batches, uneven parti
 one-dimensional tensors, and subcolumn views. The C++ TileDB storage tests and the cuGraph-PyG
 `DistTensor` smoke test pass.
 
-The locally actionable checklist is complete. Two infrastructure-dependent checks remain: true
-multi-node execution is unavailable because this session has access to only `dgx19`, with no
-scheduler allocation or second node endpoint, and the host has no NVMe block device or mount for a
-cold-NVMe benchmark.
+The locally actionable checklist on `dgx19` is complete. True multi-node execution remains blocked
+because that session had no scheduler allocation or second-node endpoint. The `dgx19` host also had
+no NVMe device, but a subsequent single-GPU cold-NVMe benchmark completed on a DGX Spark with an
+NVIDIA GB10. The next test target is a separate host with eight NVIDIA RTX 6000 Pro GPUs and local
+NVMe storage.
 
 Scatter, file load, and file store correctly return `WHOLEMEMORY_NOT_SUPPORTED`. A missing Cython
 handler initially displayed this as `Error code 9 not recognized`; the handler was added and these
@@ -291,6 +292,58 @@ reads after warmup. These numbers therefore characterize warm-cache TileDB query
 staging overhead. The benchmark was not rerun after the Cython-only error-translation change because
 that change does not touch the gather path.
 
+## DGX Spark GB10 cold-NVMe benchmark
+
+A later run on host `p4242-0660` used one NVIDIA GB10, `/dev/nvme0n1p2` with ext4, and an 8 GiB
+synthetic feature table containing 16,777,216 rows of 128 float32 values. The checked-in raw results
+and report are under `nvme_benchmark_results/20260821-gb10/`.
+
+The results confirmed two different performance limitations:
+
+- for a 65,536-row locality-biased gather, the best cold TileDB configuration used 256-row tiles,
+  reached 0.525 GiB/s useful throughput, and had 1.27x read amplification; pinned CPU reached
+  30.462 GiB/s;
+- cold random gathers had 253x to 16,069x read amplification, while warm random gathers remained
+  hundreds to thousands of milliseconds with zero physical reads, demonstrating substantial
+  TileDB query/range CPU overhead in addition to storage amplification.
+
+The two complete GB10 runs were directionally repeatable: their median mean-latency difference was
+approximately 2.2%, and their cold physical-read counts matched. The original ten samples per case
+only provide a directional p95.
+
+The benchmark has since been extended for the RTX 6000 Pro run. It now supports one process per GPU,
+rank-local TileDB arrays, cross-rank global IDs, synchronized cache control, slowest-rank latency,
+block-device and per-process I/O counters, raw per-sample output, optional TileDB statistics,
+CUDA allocator and RSS observations, TileDB staging-allocation/D2H/read-and-reorder/H2D timings,
+recorded sampler traces, consolidated-array experiments, and bounded query-chunk experiments. The
+default backend behavior and default TileDB tile extent remain unchanged until these experiments
+provide representative evidence.
+
+The planned eight-GPU command is:
+
+```bash
+python python/pylibwholegraph/benchmarks/tiledb_feature_fetch_benchmark.py \
+  --world-size 8 \
+  --data-dir /path/on/nvme/wholememory-tiledb-rtx6000 \
+  --output nvme_benchmark_results/rtx6000-pro-8gpu.json \
+  --tile-extents 16,64,256,4096,65536 \
+  --query-chunk-rows 0,1024,4096,16384 \
+  --repetitions 30 \
+  --storage-baseline \
+  --tiledb-stats
+```
+
+Before the benchmark, run the checked-in correctness regression on all eight GPUs:
+
+```bash
+TEST_WM_TILEDB=1 TEST_WM_TILEDB_WORLD_SIZE=8 pytest -q \
+  python/pylibwholegraph/pylibwholegraph/tests/pylibwholegraph/test_tiledb_tensor.py
+```
+
+Run a second pass with `--consolidate` and a different output/data directory to compare fragment
+layout without overwriting the unconsolidated arrays. Device-level read counters can include other
+host activity, so the RTX host should be otherwise idle during measurement.
+
 ## Additional findings
 
 ### Partition-list API mismatch
@@ -325,11 +378,13 @@ communication.
    API.
 3. [ ] Run the distributed matrix across at least two physical nodes. Blocked on infrastructure:
    this session exposes only `dgx19`, no scheduler or MPI launcher, and no second node endpoint.
-4. [ ] Run cold-storage benchmarks on actual NVMe while collecting physical bytes, bandwidth,
-   TileDB statistics, H2D bandwidth, pinned-memory usage, and device staging usage. Blocked on
-   infrastructure: the only physical data disks visible to this host are rotational `/dev/sda` and
-   `/dev/sdb`; `/tmp` and `/raid` are mounted from those devices. PCI and sysfs inspection found no
-   NVMe controller or namespace.
+4. [x] Run a single-GPU cold-storage benchmark on DGX Spark GB10 NVMe with physical-byte and
+   bandwidth accounting.
+5. [ ] Run the enhanced benchmark with eight RTX 6000 Pro ranks on local NVMe, including TileDB
+   statistics, query-chunk and consolidation sweeps, device staging observations, and an otherwise
+   idle block device.
+6. [ ] Capture a representative GNN sampler trace and use the built-in phase counters plus Nsight
+   Systems to separate routing wait from D2H and TileDB query from CPU reorder, and to measure NCCL.
 
 ## Final status
 
@@ -347,4 +402,5 @@ communication.
 | cuGraph-PyG TileDB smoke test | PASS |
 | Core pylibwholegraph local mapping rejection | PASS |
 | True multi-node test | BLOCKED: no second node |
-| Cold NVMe benchmark | BLOCKED: no NVMe device |
+| Single-GPU cold NVMe benchmark | PASS: DGX Spark GB10 |
+| Eight-GPU NVMe benchmark | NEXT: RTX 6000 Pro host |
