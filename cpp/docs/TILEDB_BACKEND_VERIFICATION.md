@@ -4,6 +4,8 @@ Date: 2026-08-21
 Branch: `prototype/tiledb-backend`
 Host: `dgx19`
 
+Updated: 2026-08-25 with the eight-GPU RTX PRO 6000 NVMe results.
+
 ## Executive summary
 
 The TileDB-enabled library and Python packages build successfully in an isolated Conda environment.
@@ -15,8 +17,9 @@ one-dimensional tensors, and subcolumn views. The C++ TileDB storage tests and t
 The locally actionable checklist on `dgx19` is complete. True multi-node execution remains blocked
 because that session had no scheduler allocation or second-node endpoint. The `dgx19` host also had
 no NVMe device, but a subsequent single-GPU cold-NVMe benchmark completed on a DGX Spark with an
-NVIDIA GB10. The next test target is a separate host with eight NVIDIA RTX 6000 Pro GPUs and local
-NVMe storage.
+NVIDIA GB10. The enhanced benchmark then completed on a separate host with eight NVIDIA RTX PRO
+6000 Blackwell Server Edition GPUs and local NVMe storage, including the unconsolidated and
+consolidated sweeps described below.
 
 Scatter, file load, and file store correctly return `WHOLEMEMORY_NOT_SUPPORTED`. A missing Cython
 handler initially displayed this as `Error code 9 not recognized`; the handler was added and these
@@ -344,6 +347,62 @@ Run a second pass with `--consolidate` and a different output/data directory to 
 layout without overwriting the unconsolidated arrays. Device-level read counters can include other
 host activity, so the RTX host should be otherwise idle during measurement.
 
+## Eight-GPU RTX PRO 6000 NVMe verification
+
+The planned run completed on host `4u8g-tur-0037` at commit
+`0ecd664a2f29029f3fbadc3b3d5b7d569767cd13`. The host provided:
+
+- eight NVIDIA RTX PRO 6000 Blackwell Server Edition GPUs with 97,887 MiB each;
+- NVIDIA driver 595.71.05;
+- local ext4 storage on `/dev/nvme1n1p1` mounted at `/raid`, backed by a 2.9 TB KIOXIA
+  KCD81VUG3T20 NVMe device;
+- PyTorch 2.10.0 built for CUDA 12.9, with all eight GPUs visible and usable.
+
+The exact locked environment was recreated from `conda/environments/tiledb-wg-linux-64.lock` and
+the TileDB-enabled library, Python packages, cuGraph-PyG package, and tests were built for native
+`120a-real` architecture. The C++ TileDB storage suite passed 3/3 tests in 550 ms. The focused
+Python regression passed with eight ranks, including exact gather results, list-partition handling,
+validation, and local-mapping rejection on every rank.
+
+The literal pytest command in this document exposed a launch-environment issue in the fresh wheel
+build: multiprocessing children imported the source-tree package, which does not contain the
+installed compiled extension. Invoking the unchanged checked-in test function as an importable
+module with the installed wheel first on `PYTHONPATH` ran the same eight-process test body and
+passed. This was a Python import-shadowing failure before GPU initialization, not a backend test
+failure.
+
+Both full benchmark passes used 16,777,216 rows by 128 float32 columns (8 GiB), all five requested
+tile extents, all four query-chunk settings, 30 repetitions, the storage baseline, and TileDB
+statistics. Each pass produced 252 aggregate cases and 7,560 synchronized aggregate samples; each
+of the eight rank files contains 252 cases with 30 samples apiece. All recorded mean and p95
+latencies are finite.
+
+| Pass | Cases/samples | Elapsed | Sequential NVMe baseline |
+|---|---:|---:|---:|
+| Unconsolidated | 252 / 7,560 | 6,212 s | 3.218 GiB/s |
+| Consolidated | 252 / 7,560 | 6,266 s | 3.233 GiB/s |
+
+Representative best unconsolidated results for the largest 65,536-row batch were:
+
+| Cache/trace | Best tile | Query chunk | Mean/p95 latency | Useful throughput | Read amplification |
+|---|---:|---:|---:|---:|---:|
+| Cold random | 65,536 | 0 | 1,641.4/1,661.5 ms | 0.152 GiB/s | 32.01x |
+| Cold locality | 256 | 0 | 160.4/174.2 ms | 1.558 GiB/s | 2.02x |
+| Warm random | 65,536 | 0 | 376.5/390.0 ms | 0.664 GiB/s | 0x physical reads |
+| Warm locality | 4,096 | 0 | 87.4/94.6 ms | 2.860 GiB/s | 0x physical reads |
+
+Consolidation had negligible overall effect because the ingest already produced a simple fragment
+layout: median latency changed by -0.38% for cold cases and -1.64% for warm cases, and median cold
+physical bytes were unchanged. The best consolidated 65,536-row locality cases reached 1.622 GiB/s
+cold and 2.912 GiB/s warm. The results reinforce the GB10 findings: locality and small tiles greatly
+reduce cold read amplification, while warm random performance remains dominated by TileDB
+query/range and CPU reorder overhead rather than storage.
+
+Aggregate JSON, CSV, raw-sample CSV, and per-rank checkpoints are under
+`nvme_benchmark_results/` with the prefixes `rtx6000-pro-8gpu` and
+`rtx6000-pro-8gpu-consolidated`. The generated arrays remain outside the checkout in separate
+49 GiB directories under `/raid/abarghi/wholememory-tiledb-rtx6000-{unconsolidated,consolidated}`.
+
 ## Additional findings
 
 ### Partition-list API mismatch
@@ -380,7 +439,7 @@ communication.
    this session exposes only `dgx19`, no scheduler or MPI launcher, and no second node endpoint.
 4. [x] Run a single-GPU cold-storage benchmark on DGX Spark GB10 NVMe with physical-byte and
    bandwidth accounting.
-5. [ ] Run the enhanced benchmark with eight RTX 6000 Pro ranks on local NVMe, including TileDB
+5. [x] Run the enhanced benchmark with eight RTX PRO 6000 ranks on local NVMe, including TileDB
    statistics, query-chunk and consolidation sweeps, device staging observations, and an otherwise
    idle block device.
 6. [ ] Capture a representative GNN sampler trace and use the built-in phase counters plus Nsight
@@ -403,4 +462,4 @@ communication.
 | Core pylibwholegraph local mapping rejection | PASS |
 | True multi-node test | BLOCKED: no second node |
 | Single-GPU cold NVMe benchmark | PASS: DGX Spark GB10 |
-| Eight-GPU NVMe benchmark | NEXT: RTX 6000 Pro host |
+| Eight-GPU NVMe benchmark | PASS: RTX PRO 6000, unconsolidated and consolidated |
