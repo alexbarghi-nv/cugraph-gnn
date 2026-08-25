@@ -124,4 +124,6 @@ id traces.
 ranks, raw sample retention, block-device counters, TileDB statistics, staging phase timings,
 recorded `.npy` ID traces, consolidated arrays, and query-chunk sweeps. Aggregate latency is the
 slowest rank in each synchronized sample; aggregate throughput counts requested bytes from all
-ranks.
+ranks. The phase metrics include `cpu_reorder_ms`, which isolates the final host-side scatter that
+restores request order, expands duplicate IDs, and applies a WholeMemory column slice. It excludes
+ID sorting/deduplication, TileDB range construction and query execution, and the H2D copy.

@@ -47,7 +47,8 @@ wholememory_error_code_t tiledb_read_rows_from_handle(wholememory_handle_t whole
                                                       size_t output_row_bytes,
                                                       void* raw_rows,
                                                       size_t raw_rows_size,
-                                                      void* output) noexcept;
+                                                      void* output,
+                                                      double* cpu_reorder_ms) noexcept;
 
 wholememory_error_code_t destroy_wholememory_with_comm_locked(
   wholememory_handle_t wholememory_handle) noexcept;

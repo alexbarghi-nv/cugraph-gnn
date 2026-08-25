@@ -185,7 +185,8 @@ wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememor
                                                   output_row_bytes,
                                                   host_tiledb_raw_rows_ptr,
                                                   total_recv_count * embedding_entry_size,
-                                                  host_tiledb_gather_rows_ptr));
+                                                  host_tiledb_gather_rows_ptr,
+                                                  &last_tiledb_gather_metrics.cpu_reorder_ms));
       last_tiledb_gather_metrics.tiledb_read_ms = elapsed_ms(phase_start);
 
       auto const gather_bytes                 = total_recv_count * output_row_bytes;

@@ -437,26 +437,26 @@ class tiledb_wholememory_impl : public wholememory_impl {
 
   bool contains_pointer(const void*) const override { return false; }
 
-  void read_rows(const void* ids,
-                 wholememory_dtype_t id_dtype,
-                 size_t id_count,
-                 size_t column_byte_offset,
-                 size_t output_row_bytes,
-                 void* raw_rows,
-                 size_t raw_rows_size,
-                 void* output) const
+  [[nodiscard]] double read_rows(const void* ids,
+                                 wholememory_dtype_t id_dtype,
+                                 size_t id_count,
+                                 size_t column_byte_offset,
+                                 size_t output_row_bytes,
+                                 void* raw_rows,
+                                 size_t raw_rows_size,
+                                 void* output) const
   {
     WHOLEMEMORY_CHECK(storage_ != nullptr);
     auto const global_row_offset = static_cast<int64_t>(get_local_offset() / data_granularity_);
-    storage_->read_rows(ids,
-                        id_dtype,
-                        id_count,
-                        global_row_offset,
-                        column_byte_offset,
-                        output_row_bytes,
-                        raw_rows,
-                        raw_rows_size,
-                        output);
+    return storage_->read_rows(ids,
+                               id_dtype,
+                               id_count,
+                               global_row_offset,
+                               column_byte_offset,
+                               output_row_bytes,
+                               raw_rows,
+                               raw_rows_size,
+                               output);
   }
 
  private:
@@ -2088,7 +2088,8 @@ wholememory_error_code_t tiledb_read_rows_from_handle(wholememory_handle_t whole
                                                       size_t output_row_bytes,
                                                       void* raw_rows,
                                                       size_t raw_rows_size,
-                                                      void* output) noexcept
+                                                      void* output,
+                                                      double* cpu_reorder_ms) noexcept
 {
 #ifndef WITH_TILEDB_SUPPORT
   (void)wholememory_handle;
@@ -2100,6 +2101,7 @@ wholememory_error_code_t tiledb_read_rows_from_handle(wholememory_handle_t whole
   (void)raw_rows;
   (void)raw_rows_size;
   (void)output;
+  (void)cpu_reorder_ms;
   return WHOLEMEMORY_NOT_SUPPORTED;
 #else
   try {
@@ -2109,14 +2111,15 @@ wholememory_error_code_t tiledb_read_rows_from_handle(wholememory_handle_t whole
     }
     auto* tiledb_impl = dynamic_cast<tiledb_wholememory_impl*>(wholememory_handle->impl);
     if (tiledb_impl == nullptr) { return WHOLEMEMORY_LOGIC_ERROR; }
-    tiledb_impl->read_rows(ids,
-                           id_dtype,
-                           id_count,
-                           column_byte_offset,
-                           output_row_bytes,
-                           raw_rows,
-                           raw_rows_size,
-                           output);
+    if (cpu_reorder_ms == nullptr) { return WHOLEMEMORY_INVALID_INPUT; }
+    *cpu_reorder_ms = tiledb_impl->read_rows(ids,
+                                             id_dtype,
+                                             id_count,
+                                             column_byte_offset,
+                                             output_row_bytes,
+                                             raw_rows,
+                                             raw_rows_size,
+                                             output);
     return WHOLEMEMORY_SUCCESS;
   } catch (std::exception const& error) {
     WHOLEMEMORY_ERROR("TileDB feature read failed: %s", error.what());

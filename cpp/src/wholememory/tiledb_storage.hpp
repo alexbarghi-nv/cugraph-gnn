@@ -33,15 +33,15 @@ class tiledb_read_only_storage {
    * raw_rows is caller-owned scratch storage of at least id_count * row_bytes bytes. Keeping this
    * allocation outside TileDB allows WholeMemory to supply CUDA-pinned memory.
    */
-  void read_rows(const void* ids,
-                 wholememory_dtype_t id_dtype,
-                 size_t id_count,
-                 int64_t global_row_offset,
-                 size_t column_byte_offset,
-                 size_t output_row_bytes,
-                 void* raw_rows,
-                 size_t raw_rows_size,
-                 void* output) const;
+  [[nodiscard]] double read_rows(const void* ids,
+                                 wholememory_dtype_t id_dtype,
+                                 size_t id_count,
+                                 int64_t global_row_offset,
+                                 size_t column_byte_offset,
+                                 size_t output_row_bytes,
+                                 void* raw_rows,
+                                 size_t raw_rows_size,
+                                 void* output) const;
 
   [[nodiscard]] std::string const& uri() const noexcept;
   [[nodiscard]] size_t row_bytes() const noexcept;

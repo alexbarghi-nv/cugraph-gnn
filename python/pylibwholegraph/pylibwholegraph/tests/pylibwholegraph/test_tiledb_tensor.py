@@ -77,6 +77,7 @@ def tiledb_routine(world_rank: int, world_size: int):
         assert metrics["raw_staging_bytes"] > 0
         assert metrics["output_bytes"] > 0
         assert metrics["tiledb_read_ms"] >= 0
+        assert metrics["cpu_reorder_ms"] >= 0
         with pytest.raises(NotImplementedError, match="^Not supported$"):
             tensor.get_local_tensor()
 

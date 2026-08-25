@@ -322,6 +322,12 @@ recorded sampler traces, consolidated-array experiments, and bounded query-chunk
 default backend behavior and default TileDB tile extent remain unchanged until these experiments
 provide representative evidence.
 
+After the RTX 6000 Pro run, the benchmark was extended with a nested `cpu_reorder_ms` timer around
+the final host-side scatter that restores request order, expands duplicates, and applies column
+slices. Existing GB10 and RTX 6000 Pro result files predate that timer and therefore do not contain
+measured reorder values; a rerun is required. `tiledb_read_ms` remains the enclosing measurement and
+also includes ID sorting/deduplication, range construction, query execution, and the scatter.
+
 The planned eight-GPU command is:
 
 ```bash
@@ -391,6 +397,33 @@ Representative best unconsolidated results for the largest 65,536-row batch were
 | Warm random | 65,536 | 0 | 376.5/390.0 ms | 0.664 GiB/s | 0x physical reads |
 | Warm locality | 4,096 | 0 | 87.4/94.6 ms | 2.860 GiB/s | 0x physical reads |
 
+### TileDB range and tile-planning time
+
+The backend first sorts and deduplicates rank-local IDs, coalesces adjacent IDs into inclusive
+ranges, and adds those ranges to a TileDB subarray. TileDB then identifies the fragments and dense
+tiles overlapping the ranges, partitions the query to fit its internal memory budget, schedules VFS
+reads, unfilters tiles, and copies selected cells into the result buffer. Random IDs generate nearly
+one range per unique row and can touch every large tile; locality produces fewer ranges, while tile
+extent trades tile-count/metadata overhead against read amplification.
+
+`--tiledb-stats` measured the internal planning work on sample 0 of every RTX case. The following
+values are the maximum rank timer in a representative 65,536-row unconsolidated case, converted to
+milliseconds:
+
+| Cache/trace | Tile | Chunk | End-to-end | Tile-overlap planning | Next-partition | Tile reads | Reader work |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Cold random | 65,536 | 0 | 1,628.4 | 48.2 | 63.6 | 1,392.4 | 1,544.4 |
+| Warm random | 65,536 | 0 | 362.8 | 53.1 | 67.9 | 161.6 | 297.2 |
+| Cold locality | 256 | 0 | 161.7 | 34.2 | 40.5 | 90.9 | 137.5 |
+| Warm locality | 4,096 | 0 | 86.7 | 32.4 | 39.4 | 14.2 | 58.1 |
+| Warm locality | 4,096 | 1,024 | 1,223.4 | 824.5 | 919.4 | 46.4 | 1,139.9 |
+
+These TileDB timers are nested and are not additive wall-clock phases. In particular,
+`read_compute_relevant_tile_overlap` closely overlaps `read_compute_tile_overlap`, and reader work
+contains planning, reads, unfiltering, and copying. They nevertheless show that query chunking
+repeats planning and can make it dominant: the 1,024-row chunk increased overlap planning from
+32.4 ms to 824.5 ms while warm tile-read time only increased from 14.2 ms to 46.4 ms.
+
 Consolidation had negligible overall effect because the ingest already produced a simple fragment
 layout: median latency changed by -0.38% for cold cases and -1.64% for warm cases, and median cold
 physical bytes were unchanged. The best consolidated 65,536-row locality cases reached 1.622 GiB/s
@@ -442,8 +475,9 @@ communication.
 5. [x] Run the enhanced benchmark with eight RTX PRO 6000 ranks on local NVMe, including TileDB
    statistics, query-chunk and consolidation sweeps, device staging observations, and an otherwise
    idle block device.
-6. [ ] Capture a representative GNN sampler trace and use the built-in phase counters plus Nsight
-   Systems to separate routing wait from D2H and TileDB query from CPU reorder, and to measure NCCL.
+6. [ ] Rerun representative RTX 6000 Pro cases to populate the new CPU-reorder timer, capture a GNN
+   sampler trace, and use TileDB stats plus Nsight Systems to separate ID preprocessing, TileDB
+   planning/query execution, routing wait/D2H, and NCCL.
 
 ## Final status
 

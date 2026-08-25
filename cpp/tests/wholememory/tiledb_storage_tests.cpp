@@ -100,17 +100,18 @@ TEST(TileDBStorage, PreservesRequestOrderDuplicatesAndColumnSlices)
   std::vector<unsigned char> raw(ids.size() * storage.row_bytes());
   std::array<int32_t, 5> output{};
 
-  storage.read_rows(ids.data(),
-                    WHOLEMEMORY_DT_INT64,
-                    ids.size(),
-                    0,
-                    sizeof(int32_t),
-                    sizeof(int32_t),
-                    raw.data(),
-                    raw.size(),
-                    output.data());
+  auto const cpu_reorder_ms = storage.read_rows(ids.data(),
+                                                WHOLEMEMORY_DT_INT64,
+                                                ids.size(),
+                                                0,
+                                                sizeof(int32_t),
+                                                sizeof(int32_t),
+                                                raw.data(),
+                                                raw.size(),
+                                                output.data());
 
   EXPECT_EQ(output, (std::array<int32_t, 5>{41, 11, 41, 1, 21}));
+  EXPECT_GE(cpu_reorder_ms, 0.0);
 }
 
 TEST(TileDBStorage, AcceptsGlobalIdsForALocalPartition)
@@ -121,15 +122,15 @@ TEST(TileDBStorage, AcceptsGlobalIdsForALocalPartition)
   std::vector<unsigned char> raw(ids.size() * storage.row_bytes());
   std::array<std::array<int32_t, 2>, 2> output{};
 
-  storage.read_rows(ids.data(),
-                    WHOLEMEMORY_DT_INT,
-                    ids.size(),
-                    100,
-                    0,
-                    storage.row_bytes(),
-                    raw.data(),
-                    raw.size(),
-                    output.data());
+  static_cast<void>(storage.read_rows(ids.data(),
+                                      WHOLEMEMORY_DT_INT,
+                                      ids.size(),
+                                      100,
+                                      0,
+                                      storage.row_bytes(),
+                                      raw.data(),
+                                      raw.size(),
+                                      output.data()));
 
   EXPECT_EQ(output[0], (std::array<int32_t, 2>{20, 21}));
   EXPECT_EQ(output[1], (std::array<int32_t, 2>{0, 1}));
@@ -144,15 +145,15 @@ TEST(TileDBStorage, BoundedQueriesPreserveOrderingAndDuplicates)
   std::vector<unsigned char> raw(ids.size() * storage.row_bytes());
   std::array<std::array<int32_t, 2>, 5> output{};
 
-  storage.read_rows(ids.data(),
-                    WHOLEMEMORY_DT_INT64,
-                    ids.size(),
-                    0,
-                    0,
-                    storage.row_bytes(),
-                    raw.data(),
-                    raw.size(),
-                    output.data());
+  static_cast<void>(storage.read_rows(ids.data(),
+                                      WHOLEMEMORY_DT_INT64,
+                                      ids.size(),
+                                      0,
+                                      0,
+                                      storage.row_bytes(),
+                                      raw.data(),
+                                      raw.size(),
+                                      output.data()));
 
   EXPECT_EQ(output[0], (std::array<int32_t, 2>{40, 41}));
   EXPECT_EQ(output[1], (std::array<int32_t, 2>{10, 11}));

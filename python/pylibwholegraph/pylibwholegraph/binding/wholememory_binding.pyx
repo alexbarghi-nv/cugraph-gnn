@@ -166,6 +166,7 @@ cdef extern from "wholememory/wholememory.h":
         double staging_allocation_ms
         double indices_d2h_ms
         double tiledb_read_ms
+        double cpu_reorder_ms
         double rows_h2d_ms
         size_t index_bytes
         size_t raw_staging_bytes
@@ -1043,6 +1044,7 @@ def get_last_tiledb_gather_metrics():
         "staging_allocation_ms": metrics.staging_allocation_ms,
         "indices_d2h_ms": metrics.indices_d2h_ms,
         "tiledb_read_ms": metrics.tiledb_read_ms,
+        "cpu_reorder_ms": metrics.cpu_reorder_ms,
         "rows_h2d_ms": metrics.rows_h2d_ms,
         "index_bytes": metrics.index_bytes,
         "raw_staging_bytes": metrics.raw_staging_bytes,

@@ -88,6 +88,7 @@ typedef struct wholememory_tiledb_gather_metrics_t {
   double staging_allocation_ms;
   double indices_d2h_ms;
   double tiledb_read_ms;
+  double cpu_reorder_ms;
   double rows_h2d_ms;
   size_t index_bytes;
   size_t raw_staging_bytes;

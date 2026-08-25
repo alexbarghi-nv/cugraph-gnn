@@ -668,6 +668,9 @@ def aggregate_rank_results(
                 "tiledb_read_ms": slowest_rank_sample["phase_metrics"][
                     "tiledb_read_ms"
                 ],
+                "cpu_reorder_ms": slowest_rank_sample["phase_metrics"][
+                    "cpu_reorder_ms"
+                ],
                 "rows_h2d_ms": slowest_rank_sample["phase_metrics"]["rows_h2d_ms"],
                 "index_bytes": slowest_rank_sample["phase_metrics"]["index_bytes"],
                 "raw_staging_bytes": slowest_rank_sample["phase_metrics"][
@@ -763,6 +766,9 @@ def aggregate_rank_results(
                 ),
                 "tiledb_read_mean_ms": statistics.mean(
                     sample["tiledb_read_ms"] for sample in aggregate_samples
+                ),
+                "cpu_reorder_mean_ms": statistics.mean(
+                    sample["cpu_reorder_ms"] for sample in aggregate_samples
                 ),
                 "rows_h2d_mean_ms": statistics.mean(
                     sample["rows_h2d_ms"] for sample in aggregate_samples

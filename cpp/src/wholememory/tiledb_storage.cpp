@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -116,17 +117,17 @@ tiledb_read_only_storage::tiledb_read_only_storage(std::string uri,
 
 tiledb_read_only_storage::~tiledb_read_only_storage() = default;
 
-void tiledb_read_only_storage::read_rows(const void* ids,
-                                         wholememory_dtype_t id_dtype,
-                                         size_t id_count,
-                                         int64_t global_row_offset,
-                                         size_t column_byte_offset,
-                                         size_t output_row_bytes,
-                                         void* raw_rows,
-                                         size_t raw_rows_size,
-                                         void* output) const
+double tiledb_read_only_storage::read_rows(const void* ids,
+                                           wholememory_dtype_t id_dtype,
+                                           size_t id_count,
+                                           int64_t global_row_offset,
+                                           size_t column_byte_offset,
+                                           size_t output_row_bytes,
+                                           void* raw_rows,
+                                           size_t raw_rows_size,
+                                           void* output) const
 {
-  if (id_count == 0) { return; }
+  if (id_count == 0) { return 0.0; }
   if (ids == nullptr || raw_rows == nullptr || output == nullptr) {
     throw std::invalid_argument("TileDB read buffers must not be null");
   }
@@ -226,9 +227,10 @@ void tiledb_read_only_storage::read_rows(const void* ids,
     tiledb_query_free(&query);
   }
 
-  auto const* raw        = static_cast<unsigned char const*>(raw_rows);
-  auto* dst              = static_cast<unsigned char*>(output);
-  size_t unique_position = 0;
+  auto const reorder_start = std::chrono::steady_clock::now();
+  auto const* raw          = static_cast<unsigned char const*>(raw_rows);
+  auto* dst                = static_cast<unsigned char*>(output);
+  size_t unique_position   = 0;
   for (size_t i = 0; i < sorted_ids.size();) {
     size_t end = i + 1;
     while (end < sorted_ids.size() && sorted_ids[end].local_id == sorted_ids[i].local_id) {
@@ -242,6 +244,8 @@ void tiledb_read_only_storage::read_rows(const void* ids,
     ++unique_position;
     i = end;
   }
+  auto const reorder_elapsed = std::chrono::steady_clock::now() - reorder_start;
+  return std::chrono::duration<double, std::milli>(reorder_elapsed).count();
 }
 
 std::string const& tiledb_read_only_storage::uri() const noexcept { return impl_->uri; }

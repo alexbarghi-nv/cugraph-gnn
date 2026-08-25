@@ -112,6 +112,7 @@ def round_row(row: dict[str, Any], configuration: str) -> dict[str, Any]:
         "process_cpu_percent": round(row["process_cpu_percent"], 1),
         "indices_d2h_mean_ms": round(row.get("indices_d2h_mean_ms", 0.0), 3),
         "tiledb_read_mean_ms": round(row.get("tiledb_read_mean_ms", 0.0), 3),
+        "cpu_reorder_mean_ms": round(row.get("cpu_reorder_mean_ms", 0.0), 3),
         "rows_h2d_mean_ms": round(row.get("rows_h2d_mean_ms", 0.0), 3),
         "samples": row["samples"],
     }
@@ -513,6 +514,11 @@ def main() -> None:
                             "format": "number",
                         },
                         {
+                            "field": "cpu_reorder_mean_ms",
+                            "label": "CPU reorder ms",
+                            "format": "number",
+                        },
+                        {
                             "field": "rows_h2d_mean_ms",
                             "label": "Rows H2D ms",
                             "format": "number",
@@ -620,7 +626,7 @@ def main() -> None:
                     "body": (
                         "## Limitations and omitted instrumentation\n\n"
                         "This is a single-machine synthetic benchmark, not an application trace. `POSIX_FADV_DONTNEED` is advisory, and device counters can include unrelated host activity. "
-                        "The benchmark records TileDB statistics when requested, CUDA allocator and process-RSS observations, and staging-allocation, stream-wait/D2H, TileDB-read-plus-reorder, and H2D timings. It does not yet separate routing wait from D2H, query execution from CPU reorder, or NCCL phases. "
+                        "The benchmark records TileDB statistics when requested, CUDA allocator and process-RSS observations, and staging-allocation, stream-wait/D2H, TileDB-read-plus-reorder, CPU output-reorder, and H2D timings. It does not yet separate routing wait from D2H, ID preprocessing from query execution, TileDB's internal planning from tile reads, or NCCL phases. "
                         "Torch allocator peaks may not capture allocations made outside its allocator."
                     ),
                 },
