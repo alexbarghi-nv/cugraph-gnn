@@ -412,7 +412,8 @@ class tiledb_wholememory_impl : public wholememory_impl {
                           size_t total_size,
                           wholememory_comm_t comm,
                           size_t data_granularity,
-                          size_t* rank_entry_partition)
+                          size_t* rank_entry_partition,
+                          wholememory_tiledb_array_layout_t array_layout)
     : wholememory_impl(wholememory_handle,
                        total_size,
                        comm,
@@ -420,7 +421,8 @@ class tiledb_wholememory_impl : public wholememory_impl {
                        WHOLEMEMORY_ML_TILEDB,
                        data_granularity,
                        rank_entry_partition),
-      array_uri_(std::move(array_uri))
+      array_uri_(std::move(array_uri)),
+      array_layout_(array_layout)
   {
   }
 
@@ -428,26 +430,31 @@ class tiledb_wholememory_impl : public wholememory_impl {
   {
     generate_rank_partition_strategy();
     WHOLEMEMORY_CHECK(get_local_size() % data_granularity_ == 0);
-    auto const local_row_count = static_cast<int64_t>(get_local_size() / data_granularity_);
+    auto const storage_size      = array_layout_ == WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED
+                                     ? total_size()
+                                     : get_local_size();
+    auto const storage_row_count = static_cast<int64_t>(storage_size / data_granularity_);
     storage_ =
-      std::make_unique<tiledb_read_only_storage>(array_uri_, data_granularity_, local_row_count);
+      std::make_unique<tiledb_read_only_storage>(array_uri_, data_granularity_, storage_row_count);
   }
 
   void destroy_memory() noexcept override { storage_.reset(); }
 
   bool contains_pointer(const void*) const override { return false; }
 
-  [[nodiscard]] double read_rows(const void* ids,
-                                 wholememory_dtype_t id_dtype,
-                                 size_t id_count,
-                                 size_t column_byte_offset,
-                                 size_t output_row_bytes,
-                                 void* raw_rows,
-                                 size_t raw_rows_size,
-                                 void* output) const
+  [[nodiscard]] tiledb_read_metrics read_rows(const void* ids,
+                                              wholememory_dtype_t id_dtype,
+                                              size_t id_count,
+                                              size_t column_byte_offset,
+                                              size_t output_row_bytes,
+                                              void* raw_rows,
+                                              size_t raw_rows_size,
+                                              void* output) const
   {
     WHOLEMEMORY_CHECK(storage_ != nullptr);
-    auto const global_row_offset = static_cast<int64_t>(get_local_offset() / data_granularity_);
+    auto const global_row_offset = array_layout_ == WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED
+                                     ? int64_t{0}
+                                     : static_cast<int64_t>(get_local_offset() / data_granularity_);
     return storage_->read_rows(ids,
                                id_dtype,
                                id_count,
@@ -461,6 +468,7 @@ class tiledb_wholememory_impl : public wholememory_impl {
 
  private:
   std::string array_uri_;
+  wholememory_tiledb_array_layout_t array_layout_;
   std::unique_ptr<tiledb_read_only_storage> storage_;
 };
 #endif
@@ -2004,12 +2012,14 @@ wholememory_error_code_t create_wholememory(wholememory_handle_t* wholememory_ha
   }
 }
 
-wholememory_error_code_t create_tiledb_wholememory(wholememory_handle_t* wholememory_handle_ptr,
-                                                   const char* array_uri,
-                                                   size_t total_size,
-                                                   wholememory_comm_t comm,
-                                                   size_t data_granularity,
-                                                   size_t* rank_entry_partition) noexcept
+wholememory_error_code_t create_tiledb_wholememory(
+  wholememory_handle_t* wholememory_handle_ptr,
+  const char* array_uri,
+  size_t total_size,
+  wholememory_comm_t comm,
+  size_t data_granularity,
+  size_t* rank_entry_partition,
+  wholememory_tiledb_array_layout_t array_layout) noexcept
 {
 #ifndef WITH_TILEDB_SUPPORT
   (void)wholememory_handle_ptr;
@@ -2018,12 +2028,15 @@ wholememory_error_code_t create_tiledb_wholememory(wholememory_handle_t* wholeme
   (void)comm;
   (void)data_granularity;
   (void)rank_entry_partition;
+  (void)array_layout;
   WHOLEMEMORY_ERROR("TileDB support was not enabled when libwholegraph was built");
   return WHOLEMEMORY_NOT_SUPPORTED;
 #else
   try {
     if (wholememory_handle_ptr == nullptr || array_uri == nullptr || array_uri[0] == '\0' ||
         comm == nullptr || data_granularity == 0 || total_size == 0 ||
+        (array_layout != WHOLEMEMORY_TILEDB_ARRAY_RANK_LOCAL &&
+         array_layout != WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED) ||
         total_size % data_granularity != 0) {
       return WHOLEMEMORY_INVALID_INPUT;
     }
@@ -2045,9 +2058,18 @@ wholememory_error_code_t create_tiledb_wholememory(wholememory_handle_t* wholeme
     wholememory_create_param params(
       total_size, WHOLEMEMORY_MT_DISTRIBUTED, WHOLEMEMORY_ML_TILEDB, data_granularity);
     WM_COMM_CHECK_ALL_SAME(comm, params);
+    WM_COMM_CHECK_ALL_SAME(comm, array_layout);
+    if (array_layout == WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED) {
+      WM_COMM_CHECK_ALL_SAME(comm, std::string(array_uri));
+    }
 
-    handle->impl = new tiledb_wholememory_impl(
-      handle.get(), array_uri, total_size, comm, data_granularity, rank_entry_partition);
+    handle->impl = new tiledb_wholememory_impl(handle.get(),
+                                               array_uri,
+                                               total_size,
+                                               comm,
+                                               data_granularity,
+                                               rank_entry_partition,
+                                               array_layout);
     std::string local_open_error;
     try {
       handle->impl->create_memory();
@@ -2080,16 +2102,17 @@ wholememory_error_code_t create_tiledb_wholememory(wholememory_handle_t* wholeme
 #endif
 }
 
-wholememory_error_code_t tiledb_read_rows_from_handle(wholememory_handle_t wholememory_handle,
-                                                      const void* ids,
-                                                      wholememory_dtype_t id_dtype,
-                                                      size_t id_count,
-                                                      size_t column_byte_offset,
-                                                      size_t output_row_bytes,
-                                                      void* raw_rows,
-                                                      size_t raw_rows_size,
-                                                      void* output,
-                                                      double* cpu_reorder_ms) noexcept
+wholememory_error_code_t tiledb_read_rows_from_handle(
+  wholememory_handle_t wholememory_handle,
+  const void* ids,
+  wholememory_dtype_t id_dtype,
+  size_t id_count,
+  size_t column_byte_offset,
+  size_t output_row_bytes,
+  void* raw_rows,
+  size_t raw_rows_size,
+  void* output,
+  wholememory_tiledb_gather_metrics_t* metrics) noexcept
 {
 #ifndef WITH_TILEDB_SUPPORT
   (void)wholememory_handle;
@@ -2101,7 +2124,7 @@ wholememory_error_code_t tiledb_read_rows_from_handle(wholememory_handle_t whole
   (void)raw_rows;
   (void)raw_rows_size;
   (void)output;
-  (void)cpu_reorder_ms;
+  (void)metrics;
   return WHOLEMEMORY_NOT_SUPPORTED;
 #else
   try {
@@ -2111,15 +2134,26 @@ wholememory_error_code_t tiledb_read_rows_from_handle(wholememory_handle_t whole
     }
     auto* tiledb_impl = dynamic_cast<tiledb_wholememory_impl*>(wholememory_handle->impl);
     if (tiledb_impl == nullptr) { return WHOLEMEMORY_LOGIC_ERROR; }
-    if (cpu_reorder_ms == nullptr) { return WHOLEMEMORY_INVALID_INPUT; }
-    *cpu_reorder_ms = tiledb_impl->read_rows(ids,
-                                             id_dtype,
-                                             id_count,
-                                             column_byte_offset,
-                                             output_row_bytes,
-                                             raw_rows,
-                                             raw_rows_size,
-                                             output);
+    if (metrics == nullptr) { return WHOLEMEMORY_INVALID_INPUT; }
+    auto const read_metrics         = tiledb_impl->read_rows(ids,
+                                                     id_dtype,
+                                                     id_count,
+                                                     column_byte_offset,
+                                                     output_row_bytes,
+                                                     raw_rows,
+                                                     raw_rows_size,
+                                                     output);
+    metrics->id_decode_ms           = read_metrics.id_decode_ms;
+    metrics->id_sort_ms             = read_metrics.id_sort_ms;
+    metrics->id_deduplicate_ms      = read_metrics.id_deduplicate_ms;
+    metrics->query_setup_ms         = read_metrics.query_setup_ms;
+    metrics->range_build_ms         = read_metrics.range_build_ms;
+    metrics->query_submit_ms        = read_metrics.query_submit_ms;
+    metrics->cpu_reorder_ms         = read_metrics.cpu_reorder_ms;
+    metrics->storage_requested_rows = read_metrics.requested_rows;
+    metrics->storage_unique_rows    = read_metrics.unique_rows;
+    metrics->storage_range_count    = read_metrics.range_count;
+    metrics->storage_query_count    = read_metrics.query_count;
     return WHOLEMEMORY_SUCCESS;
   } catch (std::exception const& error) {
     WHOLEMEMORY_ERROR("TileDB feature read failed: %s", error.what());

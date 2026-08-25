@@ -120,10 +120,16 @@ wholememory_error_code_t wholememory_open_tiledb(wholememory_handle_t* wholememo
                                                  size_t total_size,
                                                  wholememory_comm_t comm,
                                                  size_t data_granularity,
-                                                 size_t* rank_entry_partition)
+                                                 size_t* rank_entry_partition,
+                                                 wholememory_tiledb_array_layout_t array_layout)
 {
-  return wholememory::create_tiledb_wholememory(
-    wholememory_handle_ptr, array_uri, total_size, comm, data_granularity, rank_entry_partition);
+  return wholememory::create_tiledb_wholememory(wholememory_handle_ptr,
+                                                array_uri,
+                                                total_size,
+                                                comm,
+                                                data_granularity,
+                                                rank_entry_partition,
+                                                array_layout);
 }
 
 wholememory_error_code_t wholememory_free(wholememory_handle_t wholememory_handle)

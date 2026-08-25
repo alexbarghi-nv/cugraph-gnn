@@ -54,6 +54,10 @@ cdef extern from "wholememory/wholememory.h":
         WHOLEMEMORY_ML_HOST                 "WHOLEMEMORY_ML_HOST"
         WHOLEMEMORY_ML_TILEDB               "WHOLEMEMORY_ML_TILEDB"
 
+    ctypedef enum wholememory_tiledb_array_layout_t:
+        WHOLEMEMORY_TILEDB_ARRAY_RANK_LOCAL "WHOLEMEMORY_TILEDB_ARRAY_RANK_LOCAL"
+        WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED "WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED"
+
     ctypedef enum wholememory_distributed_backend_t:
         WHOLEMEMORY_DB_NONE                 "WHOLEMEMORY_DB_NONE"
         WHOLEMEMORY_DB_NCCL                 "WHOLEMEMORY_DB_NCCL"
@@ -163,11 +167,24 @@ cdef extern from "wholememory/wholememory.h":
 
     cdef struct wholememory_tiledb_gather_metrics_t:
         int valid
+        double id_routing_ms
         double staging_allocation_ms
         double indices_d2h_ms
         double tiledb_read_ms
+        double id_decode_ms
+        double id_sort_ms
+        double id_deduplicate_ms
+        double query_setup_ms
+        double range_build_ms
+        double query_submit_ms
         double cpu_reorder_ms
         double rows_h2d_ms
+        double embedding_exchange_ms
+        double output_reorder_ms
+        size_t storage_requested_rows
+        size_t storage_unique_rows
+        size_t storage_range_count
+        size_t storage_query_count
         size_t index_bytes
         size_t raw_staging_bytes
         size_t output_bytes
@@ -534,7 +551,8 @@ cdef extern from "wholememory/wholememory_tensor.h":
         wholememory_tensor_description_t *tensor_description,
         wholememory_comm_t comm,
         const char *array_uri,
-        size_t *tensor_entry_partition)
+        size_t *tensor_entry_partition,
+        wholememory_tiledb_array_layout_t array_layout)
 
     cdef wholememory_error_code_t wholememory_destroy_tensor(wholememory_tensor_t wholememory_tensor)
 
@@ -1041,11 +1059,24 @@ def get_last_tiledb_gather_metrics():
     check_wholememory_error_code(wholememory_get_last_tiledb_gather_metrics(&metrics))
     return {
         "valid": metrics.valid != 0,
+        "id_routing_ms": metrics.id_routing_ms,
         "staging_allocation_ms": metrics.staging_allocation_ms,
         "indices_d2h_ms": metrics.indices_d2h_ms,
         "tiledb_read_ms": metrics.tiledb_read_ms,
+        "id_decode_ms": metrics.id_decode_ms,
+        "id_sort_ms": metrics.id_sort_ms,
+        "id_deduplicate_ms": metrics.id_deduplicate_ms,
+        "query_setup_ms": metrics.query_setup_ms,
+        "range_build_ms": metrics.range_build_ms,
+        "query_submit_ms": metrics.query_submit_ms,
         "cpu_reorder_ms": metrics.cpu_reorder_ms,
         "rows_h2d_ms": metrics.rows_h2d_ms,
+        "embedding_exchange_ms": metrics.embedding_exchange_ms,
+        "output_reorder_ms": metrics.output_reorder_ms,
+        "storage_requested_rows": metrics.storage_requested_rows,
+        "storage_unique_rows": metrics.storage_unique_rows,
+        "storage_range_count": metrics.storage_range_count,
+        "storage_query_count": metrics.storage_query_count,
         "index_bytes": metrics.index_bytes,
         "raw_staging_bytes": metrics.raw_staging_bytes,
         "output_bytes": metrics.output_bytes,
@@ -1784,8 +1815,9 @@ def create_tiledb_wholememory_tensor(
         PyWholeMemoryTensorDescription tensor_description,
         PyWholeMemoryComm comm,
         str array_uri,
-        cython.size_t[:] tensor_entry_partition=None):
-    """Open a read-only distributed WholeMemory tensor backed by a local TileDB array."""
+        cython.size_t[:] tensor_entry_partition=None,
+        str array_layout="rank"):
+    """Open a read-only distributed WholeMemory tensor backed by TileDB arrays."""
     if tensor_description.dim() != 1 and tensor_description.dim() != 2:
         raise NotImplementedError('WholeMemory currently only supports 1D or 2D tensors')
     if tensor_description.stride()[tensor_description.dim() - 1] != 1:
@@ -1798,7 +1830,14 @@ def create_tiledb_wholememory_tensor(
     wholememory_tensor = PyWholeMemoryTensor()
     wholememory_tensor.tensor_description = tensor_description.tensor_description
     cdef size_t* partition_ptr = NULL
+    cdef wholememory_tiledb_array_layout_t layout
     cdef bytes encoded_uri = array_uri.encode('utf-8')
+    if array_layout == "rank":
+        layout = WHOLEMEMORY_TILEDB_ARRAY_RANK_LOCAL
+    elif array_layout == "node":
+        layout = WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED
+    else:
+        raise ValueError("array_layout must be 'rank' or 'node'")
     if tensor_entry_partition is not None and tensor_entry_partition.size > 0:
         partition_ptr = <size_t*>&tensor_entry_partition[0]
     check_wholememory_error_code(wholememory_create_tiledb_tensor(
@@ -1806,7 +1845,8 @@ def create_tiledb_wholememory_tensor(
         &wholememory_tensor.tensor_description,
         comm.comm_id,
         encoded_uri,
-        partition_ptr))
+        partition_ptr,
+        layout))
     return wholememory_tensor
 
 def make_tensor_as_wholememory(PyWholeMemoryTensorDescription tensor_description,

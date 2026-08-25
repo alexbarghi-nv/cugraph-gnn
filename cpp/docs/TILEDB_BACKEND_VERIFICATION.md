@@ -475,9 +475,13 @@ communication.
 5. [x] Run the enhanced benchmark with eight RTX PRO 6000 ranks on local NVMe, including TileDB
    statistics, query-chunk and consolidation sweeps, device staging observations, and an otherwise
    idle block device.
-6. [ ] Rerun representative RTX 6000 Pro cases to populate the new CPU-reorder timer, capture a GNN
-   sampler trace, and use TileDB stats plus Nsight Systems to separate ID preprocessing, TileDB
-   planning/query execution, routing wait/D2H, and NCCL.
+6. [ ] Run the new four-rank colocated loading matrix on CPU socket/NUMA node 1 and RTX PRO 6000
+   GPUs 4-7. Compare pinned CPU with rank-local and node-shared TileDB arrays across vector widths,
+   locality windows, and cache states. The benchmark now separates ID routing, D2H, decode, sort,
+   deduplication, range construction, query setup/submit, CPU reorder, H2D, embedding exchange, and
+   output reorder, with nested TileDB planning/I/O timers retained separately.
+7. [ ] Develop and run the TabICLv2 fine-tuning benchmark as a separate effort after the loading
+   matrix is operational.
 
 ## Final status
 

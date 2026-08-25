@@ -64,7 +64,13 @@ enum wholememory_memory_location_t {
   WHOLEMEMORY_ML_NONE = 0, /*!< Not defined */
   WHOLEMEMORY_ML_DEVICE,   /*!< Device Memory */
   WHOLEMEMORY_ML_HOST,     /*!< Host Memory */
-  WHOLEMEMORY_ML_TILEDB,   /*!< Read-only feature storage in a rank-local TileDB array */
+  WHOLEMEMORY_ML_TILEDB,   /*!< Read-only feature storage in TileDB arrays */
+};
+
+/** Physical TileDB array layout behind a distributed logical tensor. */
+enum wholememory_tiledb_array_layout_t {
+  WHOLEMEMORY_TILEDB_ARRAY_RANK_LOCAL = 0,      /*!< Each rank opens its zero-based local rows. */
+  WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED, /*!< All ranks open one global-coordinate array. */
 };
 
 enum wholememory_distributed_backend_t {
@@ -85,11 +91,24 @@ enum LogLevel {
 /** Diagnostic timings for the most recent TileDB gather on the calling host thread. */
 typedef struct wholememory_tiledb_gather_metrics_t {
   int valid;
+  double id_routing_ms;
   double staging_allocation_ms;
   double indices_d2h_ms;
   double tiledb_read_ms;
+  double id_decode_ms;
+  double id_sort_ms;
+  double id_deduplicate_ms;
+  double query_setup_ms;
+  double range_build_ms;
+  double query_submit_ms;
   double cpu_reorder_ms;
   double rows_h2d_ms;
+  double embedding_exchange_ms;
+  double output_reorder_ms;
+  size_t storage_requested_rows;
+  size_t storage_unique_rows;
+  size_t storage_range_count;
+  size_t storage_query_count;
   size_t index_bytes;
   size_t raw_staging_bytes;
   size_t output_bytes;
@@ -271,7 +290,10 @@ wholememory_error_code_t wholememory_malloc(wholememory_handle_t* wholememory_ha
                                             size_t* rank_entry_partition = nullptr);
 
 /**
- * Open a rank-local TileDB array as read-only distributed WholeMemory storage.
+ * Open TileDB arrays as read-only distributed WholeMemory storage.
+ *
+ * Rank-local layout opens a zero-based local array on each rank. Communicator-shared layout opens
+ * one global-coordinate array on every rank and is currently intended for single-node use.
  *
  * Each communicator rank may provide a different array URI. The array schema must contain an
  * INT64 dimension named "row", with a zero-based domain covering the local partition, and a
@@ -280,12 +302,14 @@ wholememory_error_code_t wholememory_malloc(wholememory_handle_t* wholememory_ha
  * TileDB support is optional at build time. This function returns WHOLEMEMORY_NOT_SUPPORTED when
  * libwholegraph was built without BUILD_WITH_TILEDB=ON.
  */
-wholememory_error_code_t wholememory_open_tiledb(wholememory_handle_t* wholememory_handle_ptr,
-                                                 const char* array_uri,
-                                                 size_t total_size,
-                                                 wholememory_comm_t comm,
-                                                 size_t data_granularity,
-                                                 size_t* rank_entry_partition = nullptr);
+wholememory_error_code_t wholememory_open_tiledb(
+  wholememory_handle_t* wholememory_handle_ptr,
+  const char* array_uri,
+  size_t total_size,
+  wholememory_comm_t comm,
+  size_t data_granularity,
+  size_t* rank_entry_partition                   = nullptr,
+  wholememory_tiledb_array_layout_t array_layout = WHOLEMEMORY_TILEDB_ARRAY_RANK_LOCAL);
 
 /**
  * Free allocated WholeMemory Handle

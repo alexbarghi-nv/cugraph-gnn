@@ -254,12 +254,14 @@ def create_wholememory_tensor_from_tiledb(
     dtype: "torch.dtype",
     strides: Union[List[int], None] = None,
     tensor_entry_partition: Union[List[int], None] = None,
+    array_layout: str = "rank",
 ):
-    """Open read-only feature storage in a rank-local TileDB array.
+    """Open read-only feature storage in rank-local or node-shared TileDB arrays.
 
     ``array_uri`` may contain a ``{rank}`` token, which is replaced with the global communicator
-    rank. Each array stores that rank's local, zero-based rows. Gathers retain WholeMemory's normal
-    CUDA output behavior.
+    rank. Rank-local arrays store zero-based local rows. A node-shared array stores the entire
+    communicator tensor using global row coordinates. The node layout is currently intended for a
+    single-node communicator. Gathers retain WholeMemory's normal CUDA output behavior.
     """
     dim = len(sizes)
     if dim < 1 or dim > 2:
@@ -289,7 +291,11 @@ def create_wholememory_tensor_from_tiledb(
         )
     return WholeMemoryTensor(
         wmb.create_tiledb_wholememory_tensor(
-            td, comm.wmb_comm, resolved_uri, tensor_entry_partition
+            td,
+            comm.wmb_comm,
+            resolved_uri,
+            tensor_entry_partition,
+            array_layout,
         )
     )
 

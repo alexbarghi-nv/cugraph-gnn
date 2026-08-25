@@ -48,7 +48,8 @@ wholememory_error_code_t wholememory_create_tiledb_tensor(
   wholememory_tensor_description_t* tensor_description,
   wholememory_comm_t comm,
   const char* array_uri,
-  size_t* tensor_entry_partition = nullptr);
+  size_t* tensor_entry_partition                 = nullptr,
+  wholememory_tiledb_array_layout_t array_layout = WHOLEMEMORY_TILEDB_ARRAY_RANK_LOCAL);
 
 /**
  * Destroy WholeMemory Tensor

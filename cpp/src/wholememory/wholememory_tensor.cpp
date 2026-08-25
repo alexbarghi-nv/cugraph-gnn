@@ -100,7 +100,8 @@ wholememory_error_code_t wholememory_create_tiledb_tensor(
   wholememory_tensor_description_t* tensor_description,
   wholememory_comm_t comm,
   const char* array_uri,
-  size_t* tensor_entry_partition)
+  size_t* tensor_entry_partition,
+  wholememory_tiledb_array_layout_t array_layout)
 {
   if (p_wholememory_tensor == nullptr || tensor_description == nullptr || comm == nullptr ||
       array_uri == nullptr || array_uri[0] == '\0') {
@@ -127,8 +128,13 @@ wholememory_error_code_t wholememory_create_tiledb_tensor(
   tensor->root_tensor        = tensor;
   tensor->wholememory_handle = nullptr;
 
-  auto const result = wholememory_open_tiledb(
-    &tensor->wholememory_handle, array_uri, total_size, comm, row_bytes, tensor_entry_partition);
+  auto const result = wholememory_open_tiledb(&tensor->wholememory_handle,
+                                              array_uri,
+                                              total_size,
+                                              comm,
+                                              row_bytes,
+                                              tensor_entry_partition,
+                                              array_layout);
   if (result != WHOLEMEMORY_SUCCESS) {
     free(tensor);
     return result;

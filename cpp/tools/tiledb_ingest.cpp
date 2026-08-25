@@ -41,6 +41,16 @@ uint64_t parse_positive(char const* value, char const* name)
   return result;
 }
 
+uint64_t parse_nonnegative(char const* value, char const* name)
+{
+  size_t parsed = 0;
+  auto result   = std::stoull(value, &parsed);
+  if (value[parsed] != '\0') {
+    throw std::invalid_argument(std::string(name) + " must be a nonnegative integer");
+  }
+  return result;
+}
+
 bool parse_boolean(char const* value, char const* name)
 {
   std::string const parsed(value);
@@ -95,10 +105,13 @@ void ingest(tiledb_ctx_t* ctx,
             std::filesystem::path const& input_path,
             int64_t row_count,
             size_t row_bytes,
-            size_t chunk_rows)
+            size_t chunk_rows,
+            size_t input_row_offset)
 {
   std::ifstream input(input_path, std::ios::binary);
   if (!input) { throw std::runtime_error("could not open input file: " + input_path.string()); }
+  input.seekg(static_cast<std::streamoff>(input_row_offset * row_bytes));
+  if (!input) { throw std::runtime_error("could not seek to the requested input row offset"); }
 
   tiledb_array_t* array = nullptr;
   check(tiledb_array_alloc(ctx, uri.c_str(), &array), ctx, "allocate output array");
@@ -151,10 +164,10 @@ void ingest(tiledb_ctx_t* ctx,
 
 int main(int argc, char** argv)
 {
-  if (argc < 5 || argc > 8) {
+  if (argc < 5 || argc > 9) {
     std::cerr << "Usage: " << argv[0]
               << " ARRAY_URI RAW_FILE ROW_COUNT ROW_BYTES [TILE_ROWS=4096] [CHUNK_ROWS=1048576]"
-                 " [CONSOLIDATE=0]\n";
+                 " [CONSOLIDATE=0] [INPUT_ROW_OFFSET=0]\n";
     return 2;
   }
   try {
@@ -165,20 +178,26 @@ int main(int argc, char** argv)
     auto const tile_rows_u64    = argc >= 6 ? parse_positive(argv[5], "TILE_ROWS") : 4096;
     auto const chunk_rows_u64   = argc >= 7 ? parse_positive(argv[6], "CHUNK_ROWS") : 1048576;
     auto const consolidate      = argc >= 8 ? parse_boolean(argv[7], "CONSOLIDATE") : false;
+    auto const input_row_offset = argc >= 9 ? parse_nonnegative(argv[8], "INPUT_ROW_OFFSET") : 0;
     if (row_count_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
         row_bytes_u64 > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) ||
         tile_rows_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) ||
         chunk_rows_u64 > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
+        input_row_offset > static_cast<uint64_t>(std::numeric_limits<size_t>::max()) ||
         row_bytes_u64 > std::numeric_limits<uint64_t>::max() / row_count_u64 ||
+        input_row_offset > std::numeric_limits<uint64_t>::max() - row_count_u64 ||
+        input_row_offset + row_count_u64 > std::numeric_limits<uint64_t>::max() / row_bytes_u64 ||
+        input_row_offset >
+          static_cast<uint64_t>(std::numeric_limits<std::streamoff>::max()) / row_bytes_u64 ||
         chunk_rows_u64 > std::numeric_limits<size_t>::max() / row_bytes_u64 ||
         chunk_rows_u64 * row_bytes_u64 >
           static_cast<uint64_t>(std::numeric_limits<std::streamsize>::max())) {
       throw std::out_of_range("numeric argument is too large");
     }
-    auto const expected_bytes = row_count_u64 * row_bytes_u64;
+    auto const required_bytes = (input_row_offset + row_count_u64) * row_bytes_u64;
     if (!std::filesystem::is_regular_file(input) ||
-        std::filesystem::file_size(input) != expected_bytes) {
-      throw std::invalid_argument("RAW_FILE size must equal ROW_COUNT * ROW_BYTES");
+        std::filesystem::file_size(input) < required_bytes) {
+      throw std::invalid_argument("RAW_FILE is too small for INPUT_ROW_OFFSET + ROW_COUNT rows");
     }
 
     tiledb_ctx_t* ctx = nullptr;
@@ -197,7 +216,8 @@ int main(int argc, char** argv)
              input,
              static_cast<int64_t>(row_count_u64),
              static_cast<size_t>(row_bytes_u64),
-             static_cast<size_t>(chunk_rows_u64));
+             static_cast<size_t>(chunk_rows_u64),
+             static_cast<size_t>(input_row_offset));
       if (consolidate) {
         check(tiledb_array_consolidate(ctx, uri.c_str(), nullptr), ctx, "consolidate array");
         check(tiledb_array_vacuum(ctx, uri.c_str(), nullptr), ctx, "vacuum array");

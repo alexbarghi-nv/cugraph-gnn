@@ -100,18 +100,22 @@ TEST(TileDBStorage, PreservesRequestOrderDuplicatesAndColumnSlices)
   std::vector<unsigned char> raw(ids.size() * storage.row_bytes());
   std::array<int32_t, 5> output{};
 
-  auto const cpu_reorder_ms = storage.read_rows(ids.data(),
-                                                WHOLEMEMORY_DT_INT64,
-                                                ids.size(),
-                                                0,
-                                                sizeof(int32_t),
-                                                sizeof(int32_t),
-                                                raw.data(),
-                                                raw.size(),
-                                                output.data());
+  auto const metrics = storage.read_rows(ids.data(),
+                                         WHOLEMEMORY_DT_INT64,
+                                         ids.size(),
+                                         0,
+                                         sizeof(int32_t),
+                                         sizeof(int32_t),
+                                         raw.data(),
+                                         raw.size(),
+                                         output.data());
 
   EXPECT_EQ(output, (std::array<int32_t, 5>{41, 11, 41, 1, 21}));
-  EXPECT_GE(cpu_reorder_ms, 0.0);
+  EXPECT_GE(metrics.cpu_reorder_ms, 0.0);
+  EXPECT_EQ(metrics.requested_rows, ids.size());
+  EXPECT_EQ(metrics.unique_rows, size_t{4});
+  EXPECT_EQ(metrics.range_count, size_t{2});
+  EXPECT_EQ(metrics.query_count, size_t{1});
 }
 
 TEST(TileDBStorage, AcceptsGlobalIdsForALocalPartition)

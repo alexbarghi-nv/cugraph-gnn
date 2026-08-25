@@ -20,6 +20,12 @@
 namespace wholememory {
 namespace {
 
+double elapsed_ms(std::chrono::steady_clock::time_point start)
+{
+  return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start)
+    .count();
+}
+
 void check_tiledb(int rc, tiledb_ctx_t* ctx, char const* operation)
 {
   if (rc == TILEDB_OK) { return; }
@@ -33,6 +39,23 @@ void check_tiledb(int rc, tiledb_ctx_t* ctx, char const* operation)
       }
       tiledb_error_free(&error);
     }
+  }
+  throw std::runtime_error(message);
+}
+
+void check_tiledb_config(int rc, tiledb_error_t*& error, char const* operation)
+{
+  if (rc == TILEDB_OK) {
+    if (error != nullptr) { tiledb_error_free(&error); }
+    return;
+  }
+  std::string message(operation);
+  if (error != nullptr) {
+    char const* detail = nullptr;
+    if (tiledb_error_message(error, &detail) == TILEDB_OK && detail != nullptr) {
+      message.append(": ").append(detail);
+    }
+    tiledb_error_free(&error);
   }
   throw std::runtime_error(message);
 }
@@ -74,8 +97,22 @@ struct tiledb_read_only_storage::impl {
     if (row_bytes == 0) { throw std::invalid_argument("TileDB row size must be nonzero"); }
     if (row_count <= 0) { throw std::invalid_argument("TileDB row count must be positive"); }
 
-    check_tiledb(tiledb_ctx_alloc(nullptr, &ctx), nullptr, "tiledb_ctx_alloc");
+    tiledb_config_t* config = nullptr;
+    tiledb_error_t* error   = nullptr;
+    auto config_rc = tiledb_config_alloc(&config, &error);
+    check_tiledb_config(config_rc, error, "tiledb_config_alloc");
     try {
+      for (auto const& setting :
+           {std::pair{"WHOLEMEMORY_TILEDB_COMPUTE_CONCURRENCY", "sm.compute_concurrency_level"},
+            std::pair{"WHOLEMEMORY_TILEDB_IO_CONCURRENCY", "sm.io_concurrency_level"}}) {
+        auto const* value = std::getenv(setting.first);
+        if (value != nullptr && value[0] != '\0') {
+          config_rc = tiledb_config_set(config, setting.second, value, &error);
+          check_tiledb_config(config_rc, error, setting.second);
+        }
+      }
+      check_tiledb(tiledb_ctx_alloc(config, &ctx), nullptr, "tiledb_ctx_alloc");
+      tiledb_config_free(&config);
       tiledb_object_t object_type = TILEDB_INVALID;
       check_tiledb(tiledb_object_type(ctx, uri.c_str(), &object_type), ctx, "tiledb_object_type");
       if (object_type != TILEDB_ARRAY) {
@@ -84,6 +121,7 @@ struct tiledb_read_only_storage::impl {
       check_tiledb(tiledb_array_alloc(ctx, uri.c_str(), &array), ctx, "tiledb_array_alloc");
       check_tiledb(tiledb_array_open(ctx, array, TILEDB_READ), ctx, "tiledb_array_open");
     } catch (...) {
+      if (config != nullptr) { tiledb_config_free(&config); }
       if (array != nullptr) { tiledb_array_free(&array); }
       tiledb_ctx_free(&ctx);
       throw;
@@ -117,17 +155,19 @@ tiledb_read_only_storage::tiledb_read_only_storage(std::string uri,
 
 tiledb_read_only_storage::~tiledb_read_only_storage() = default;
 
-double tiledb_read_only_storage::read_rows(const void* ids,
-                                           wholememory_dtype_t id_dtype,
-                                           size_t id_count,
-                                           int64_t global_row_offset,
-                                           size_t column_byte_offset,
-                                           size_t output_row_bytes,
-                                           void* raw_rows,
-                                           size_t raw_rows_size,
-                                           void* output) const
+tiledb_read_metrics tiledb_read_only_storage::read_rows(const void* ids,
+                                                        wholememory_dtype_t id_dtype,
+                                                        size_t id_count,
+                                                        int64_t global_row_offset,
+                                                        size_t column_byte_offset,
+                                                        size_t output_row_bytes,
+                                                        void* raw_rows,
+                                                        size_t raw_rows_size,
+                                                        void* output) const
 {
-  if (id_count == 0) { return 0.0; }
+  tiledb_read_metrics metrics{};
+  metrics.requested_rows = id_count;
+  if (id_count == 0) { return metrics; }
   if (ids == nullptr || raw_rows == nullptr || output == nullptr) {
     throw std::invalid_argument("TileDB read buffers must not be null");
   }
@@ -144,6 +184,7 @@ double tiledb_read_only_storage::read_rows(const void* ids,
     int64_t local_id;
     size_t original_position;
   };
+  auto phase_start = std::chrono::steady_clock::now();
   std::vector<indexed_id> sorted_ids;
   sorted_ids.reserve(id_count);
   for (size_t i = 0; i < id_count; ++i) {
@@ -154,11 +195,16 @@ double tiledb_read_only_storage::read_rows(const void* ids,
     }
     sorted_ids.push_back({local_id, i});
   }
+  metrics.id_decode_ms = elapsed_ms(phase_start);
+
+  phase_start = std::chrono::steady_clock::now();
   std::sort(sorted_ids.begin(), sorted_ids.end(), [](auto const& lhs, auto const& rhs) {
     return lhs.local_id < rhs.local_id ||
            (lhs.local_id == rhs.local_id && lhs.original_position < rhs.original_position);
   });
+  metrics.id_sort_ms = elapsed_ms(phase_start);
 
+  phase_start = std::chrono::steady_clock::now();
   std::vector<int64_t> unique_ids;
   unique_ids.reserve(sorted_ids.size());
   for (auto const& item : sorted_ids) {
@@ -166,6 +212,8 @@ double tiledb_read_only_storage::read_rows(const void* ids,
       unique_ids.push_back(item.local_id);
     }
   }
+  metrics.id_deduplicate_ms = elapsed_ms(phase_start);
+  metrics.unique_rows       = unique_ids.size();
 
   // TileDB contexts can service concurrent work, but the array object is shared by this handle.
   // Serialize query setup/submission until per-thread array handles are justified by measurements.
@@ -178,6 +226,7 @@ double tiledb_read_only_storage::read_rows(const void* ids,
     tiledb_query_t* query       = nullptr;
     tiledb_subarray_t* subarray = nullptr;
     try {
+      phase_start = std::chrono::steady_clock::now();
       check_tiledb(tiledb_query_alloc(impl_->ctx, impl_->array, TILEDB_READ, &query),
                    impl_->ctx,
                    "query alloc");
@@ -185,9 +234,11 @@ double tiledb_read_only_storage::read_rows(const void* ids,
         tiledb_query_set_layout(impl_->ctx, query, TILEDB_ROW_MAJOR), impl_->ctx, "query layout");
       check_tiledb(
         tiledb_subarray_alloc(impl_->ctx, impl_->array, &subarray), impl_->ctx, "subarray alloc");
+      metrics.query_setup_ms += elapsed_ms(phase_start);
 
       // Coalesce adjacent point ids. TileDB operates on tiles, so ranges avoid needless query-range
       // metadata while still returning rows in ascending order.
+      phase_start = std::chrono::steady_clock::now();
       for (size_t begin = chunk_begin; begin < chunk_end;) {
         size_t end = begin;
         while (end + 1 < chunk_end && unique_ids[end + 1] == unique_ids[end] + 1) {
@@ -199,9 +250,12 @@ double tiledb_read_only_storage::read_rows(const void* ids,
           tiledb_subarray_add_range(impl_->ctx, subarray, 0, &range_start, &range_end, nullptr),
           impl_->ctx,
           "add row range");
+        ++metrics.range_count;
         begin = end + 1;
       }
+      metrics.range_build_ms += elapsed_ms(phase_start);
 
+      phase_start = std::chrono::steady_clock::now();
       check_tiledb(
         tiledb_query_set_subarray_t(impl_->ctx, query, subarray), impl_->ctx, "set subarray");
       auto* chunk_output = static_cast<unsigned char*>(raw_rows) + chunk_begin * impl_->row_bytes;
@@ -210,7 +264,12 @@ double tiledb_read_only_storage::read_rows(const void* ids,
         tiledb_query_set_data_buffer(impl_->ctx, query, "values", chunk_output, &result_bytes),
         impl_->ctx,
         "set values buffer");
+      metrics.query_setup_ms += elapsed_ms(phase_start);
+
+      phase_start = std::chrono::steady_clock::now();
       check_tiledb(tiledb_query_submit(impl_->ctx, query), impl_->ctx, "query submit");
+      metrics.query_submit_ms += elapsed_ms(phase_start);
+      ++metrics.query_count;
 
       tiledb_query_status_t status = TILEDB_UNINITIALIZED;
       check_tiledb(tiledb_query_get_status(impl_->ctx, query, &status), impl_->ctx, "query status");
@@ -244,8 +303,8 @@ double tiledb_read_only_storage::read_rows(const void* ids,
     ++unique_position;
     i = end;
   }
-  auto const reorder_elapsed = std::chrono::steady_clock::now() - reorder_start;
-  return std::chrono::duration<double, std::milli>(reorder_elapsed).count();
+  metrics.cpu_reorder_ms = elapsed_ms(reorder_start);
+  return metrics;
 }
 
 std::string const& tiledb_read_only_storage::uri() const noexcept { return impl_->uri; }

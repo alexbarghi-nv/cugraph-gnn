@@ -1,12 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026, NVIDIA CORPORATION.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Multi-rank feature-gather benchmark for TileDB, pinned CPU, and CUDA.
+"""Single-node WholeMemory loading benchmark for TileDB and pinned CPU storage.
 
-Each process owns one GPU and one rank-local TileDB array. Synthetic IDs are
-global, so the normal distributed WholeMemory routing and NCCL path is included.
-Results retain every synchronized sample and aggregate throughput using the
-slowest rank's latency for each sample.
+Each process owns one GPU. TileDB storage may use one array per rank or one
+communicator-shared array. Synthetic IDs are global, so normal distributed
+WholeMemory routing and the single NCCL communicator are included.
 """
 
 from __future__ import annotations
@@ -35,6 +34,47 @@ import pylibwholegraph.binding.wholememory_binding as wmb
 import pylibwholegraph.torch as wgth
 from pylibwholegraph.utils.multiprocess import multiprocess_run
 
+PHASE_TIMING_FIELDS = (
+    "id_routing_ms",
+    "staging_allocation_ms",
+    "indices_d2h_ms",
+    "tiledb_read_ms",
+    "id_decode_ms",
+    "id_sort_ms",
+    "id_deduplicate_ms",
+    "query_setup_ms",
+    "range_build_ms",
+    "query_submit_ms",
+    "cpu_reorder_ms",
+    "rows_h2d_ms",
+    "embedding_exchange_ms",
+    "output_reorder_ms",
+)
+PHASE_COUNT_FIELDS = (
+    "storage_requested_rows",
+    "storage_unique_rows",
+    "storage_range_count",
+    "storage_query_count",
+    "index_bytes",
+    "raw_staging_bytes",
+    "output_bytes",
+)
+TILEDB_STAT_TIMING_FIELDS = (
+    "tile_overlap_planning_ms",
+    "relevant_tile_overlap_ms",
+    "partition_planning_ms",
+    "internal_tile_read_ms",
+    "internal_unfilter_ms",
+    "internal_copy_ms",
+    "internal_reader_work_ms",
+)
+TILEDB_STAT_COUNT_FIELDS = (
+    "tiledb_ranges_requested",
+    "tiledb_tiles_read",
+    "tiledb_vfs_read_ops",
+    "tiledb_vfs_read_bytes",
+)
+
 
 def parse_int_list(value: str) -> list[int]:
     return [int(item) for item in value.split(",") if item]
@@ -54,6 +94,18 @@ def parse_args() -> argparse.Namespace:
         "--tile-extents", type=parse_int_list, default=[256, 4096, 65536]
     )
     parser.add_argument(
+        "--array-layouts",
+        type=lambda value: [item for item in value.split(",") if item],
+        default=["rank", "node"],
+        help="TileDB physical layouts to test: rank,node",
+    )
+    parser.add_argument(
+        "--locality-window-rows",
+        type=parse_int_list,
+        default=[256, 4096, 65536],
+        help="Generate locality traces restricted to one random window of each size",
+    )
+    parser.add_argument(
         "--query-chunk-rows",
         type=parse_int_list,
         default=[0],
@@ -70,7 +122,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--backends",
         type=lambda value: [item for item in value.split(",") if item],
-        default=["cuda", "cpu", "tiledb"],
+        default=["cpu", "tiledb"],
     )
     parser.add_argument(
         "--block-device",
@@ -80,7 +132,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--tiledb-stats",
         action="store_true",
-        help="Capture TileDB statistics for the first measured sample of each case",
+        help="Capture compact TileDB statistics for every measured TileDB sample",
     )
     parser.add_argument(
         "--consolidate",
@@ -144,6 +196,7 @@ def prepare_tiledb_array(
     tile_extent: int,
     consolidate: bool,
     overwrite: bool,
+    input_row_offset: int = 0,
 ) -> None:
     marker = array_path / ".wholememory_benchmark.json"
     expected = {
@@ -175,6 +228,7 @@ def prepare_tiledb_array(
             str(tile_extent),
             str(min(rows, 1_048_576)),
             "1" if consolidate else "0",
+            str(input_row_offset),
         ],
         check=True,
     )
@@ -211,34 +265,35 @@ def make_traces(
     seed: int,
     rank: int,
     trace_file: Path | None,
+    locality_window_rows: list[int],
 ) -> dict[tuple[str, int], list[torch.Tensor]]:
     traces: dict[tuple[str, int], list[torch.Tensor]] = {}
+    patterns: list[tuple[str, int | None]] = [("random", None)]
+    patterns.extend(
+        (f"window_{window_rows}", window_rows) for window_rows in locality_window_rows
+    )
     for batch_size in batch_sizes:
-        for pattern_index, pattern in enumerate(("random", "locality")):
+        for pattern_index, (pattern, window_rows) in enumerate(patterns):
             generator = torch.Generator(device="cpu")
             generator.manual_seed(
                 seed + rank * 1_000_003 + batch_size * 17 + pattern_index
             )
             host_traces = []
             for _ in range(trace_count):
-                if pattern == "random":
+                if window_rows is None:
                     ids = torch.randint(0, rows, (batch_size,), generator=generator)
                 else:
-                    window_count = min(16, batch_size)
-                    window_rows = min(rows, max(256, batch_size // window_count))
-                    starts = torch.randint(
+                    effective_window_rows = min(rows, window_rows)
+                    start = torch.randint(
                         0,
-                        max(1, rows - window_rows + 1),
-                        (window_count,),
+                        max(1, rows - effective_window_rows + 1),
+                        (),
                         generator=generator,
                     )
-                    windows = torch.randint(
-                        0, window_count, (batch_size,), generator=generator
-                    )
                     offsets = torch.randint(
-                        0, window_rows, (batch_size,), generator=generator
+                        0, effective_window_rows, (batch_size,), generator=generator
                     )
-                    ids = starts[windows] + offsets
+                    ids = start + offsets
                 host_traces.append(ids.to(dtype=torch.int64))
             traces[(pattern, batch_size)] = [ids.cuda() for ids in host_traces]
     if trace_file is not None:
@@ -360,6 +415,50 @@ class TileDBStats:
         finally:
             self.lib.tiledb_stats_free_str(ctypes.byref(output))
 
+    def dump_selected(self) -> dict[str, float | int]:
+        raw = self.dump()
+        contexts = (
+            raw if isinstance(raw, list) else [raw] if isinstance(raw, dict) else []
+        )
+
+        def timer(name: str) -> float:
+            return 1000.0 * sum(
+                float(context.get("timers", {}).get(name, 0.0))
+                for context in contexts
+                if isinstance(context, dict)
+            )
+
+        def counter(name: str) -> int:
+            return sum(
+                int(context.get("counters", {}).get(name, 0))
+                for context in contexts
+                if isinstance(context, dict)
+            )
+
+        return {
+            "tile_overlap_planning_ms": timer(
+                "Context.subSubarray.read_compute_tile_overlap.sum"
+            ),
+            "relevant_tile_overlap_ms": timer(
+                "Context.subSubarray.read_compute_relevant_tile_overlap.sum"
+            ),
+            "partition_planning_ms": timer(
+                "Context.Query.Reader.SubarrayPartitioner.read_next_partition.sum"
+            ),
+            "internal_tile_read_ms": timer("Context.Query.Reader.read_tiles.sum"),
+            "internal_unfilter_ms": timer(
+                "Context.Query.Reader.unfilter_attr_tiles.sum"
+            ),
+            "internal_copy_ms": timer("Context.Query.Reader.copy_fixed_tiles.sum"),
+            "internal_reader_work_ms": timer("Context.Query.Reader.dowork.sum"),
+            "tiledb_ranges_requested": counter(
+                "Context.subSubarray.precompute_tile_overlap.ranges_requested"
+            ),
+            "tiledb_tiles_read": counter("Context.Query.Reader.num_tiles_read"),
+            "tiledb_vfs_read_ops": counter("Context.VFS.read_ops_num"),
+            "tiledb_vfs_read_bytes": counter("Context.VFS.read_byte_num"),
+        }
+
 
 def verify_tensor(tensor: Any, rows: int, width: int, offsets: list[int]) -> None:
     candidates = [rows - 1, 0, rows // 2]
@@ -387,6 +486,7 @@ def benchmark_case(
     rank: int,
     block_stat: Path | None,
     tiledb_stats: TileDBStats,
+    shared_cache_root: bool,
 ) -> list[dict[str, Any]]:
     for index in range(warmup):
         output = tensor.gather(traces[index % len(traces)])
@@ -397,11 +497,16 @@ def benchmark_case(
     process = psutil.Process()
     samples: list[dict[str, Any]] = []
     for index in range(repetitions):
-        if cache_mode == "cold" and cache_root is not None:
+        if (
+            cache_mode == "cold"
+            and cache_root is not None
+            and (not shared_cache_root or rank == 0)
+        ):
             drop_file_cache(cache_root)
         comm.barrier()
         device_before = device_read_bytes(block_stat) if rank == 0 else None
-        if index == 0 and tiledb_stats.available:
+        collect_tiledb_stats = cache_root is not None and tiledb_stats.available
+        if collect_tiledb_stats:
             tiledb_stats.reset()
         comm.barrier()
 
@@ -440,8 +545,8 @@ def benchmark_case(
             "phase_metrics": phase_metrics,
             **trace_metrics(trace, tile_extent),
         }
-        if index == 0 and tiledb_stats.available:
-            sample["tiledb_stats"] = tiledb_stats.dump()
+        if collect_tiledb_stats:
+            sample["tiledb_stats"] = tiledb_stats.dump_selected()
         samples.append(sample)
     return samples
 
@@ -467,7 +572,7 @@ def run_rank(
     *,
     args: argparse.Namespace,
     raw_paths: list[Path],
-    array_templates: dict[int, str],
+    array_templates: dict[tuple[int, str], str],
     partition: list[int],
     offsets: list[int],
     block_stat: Path | None,
@@ -482,32 +587,46 @@ def run_rank(
         args.seed,
         rank,
         args.trace_file,
+        args.locality_window_rows,
     )
     results: list[dict[str, Any]] = []
     tiledb_stats = TileDBStats(args.tiledb_stats)
     metadata = {
         "rank": rank,
         "gpu": torch.cuda.get_device_name(rank),
+        "cpu_affinity": sorted(os.sched_getaffinity(0)),
         "tiledb_stats_available": tiledb_stats.available,
         "tiledb_stats_error": tiledb_stats.error,
     }
     try:
-        configurations: list[tuple[str, int | None, int, Path | None]] = []
+        configurations: list[tuple[str, str, int | None, int, Path | None]] = []
         if "cuda" in args.backends:
-            configurations.append(("cuda", None, 0, None))
+            configurations.append(("cuda", "none", None, 0, None))
         if "cpu" in args.backends:
-            configurations.append(("cpu", None, 0, None))
+            configurations.append(("cpu", "none", None, 0, None))
         if "tiledb" in args.backends:
-            for extent in args.tile_extents:
-                for query_chunk_rows in args.query_chunk_rows:
-                    local_path = Path(
-                        array_templates[extent].replace("{rank}", str(rank))
-                    )
-                    configurations.append(
-                        ("tiledb", extent, query_chunk_rows, local_path)
-                    )
+            for array_layout in args.array_layouts:
+                for extent in args.tile_extents:
+                    for query_chunk_rows in args.query_chunk_rows:
+                        uri = array_templates[(extent, array_layout)]
+                        local_path = Path(uri.replace("{rank}", str(rank)))
+                        configurations.append(
+                            (
+                                "tiledb",
+                                array_layout,
+                                extent,
+                                query_chunk_rows,
+                                local_path,
+                            )
+                        )
 
-        for backend, tile_extent, query_chunk_rows, array_path in configurations:
+        for (
+            backend,
+            array_layout,
+            tile_extent,
+            query_chunk_rows,
+            array_path,
+        ) in configurations:
             if backend == "tiledb":
                 if query_chunk_rows == 0:
                     os.environ.pop("WHOLEMEMORY_TILEDB_QUERY_CHUNK_ROWS", None)
@@ -517,10 +636,11 @@ def run_rank(
                     )
                 tensor = wgth.create_wholememory_tensor_from_tiledb(
                     comm,
-                    array_templates[tile_extent],
+                    array_templates[(tile_extent, array_layout)],
                     [args.rows, args.width],
                     torch.float32,
                     tensor_entry_partition=partition,
+                    array_layout=array_layout,
                 )
                 cache_modes = ("cold", "warm")
             else:
@@ -538,9 +658,14 @@ def run_rank(
                 verify_tensor(tensor, args.rows, args.width, offsets)
                 for cache_mode in cache_modes:
                     if cache_mode == "warm" and array_path is not None:
-                        warm_file_cache(array_path)
+                        if array_layout == "rank" or rank == 0:
+                            warm_file_cache(array_path)
                     comm.barrier()
-                    patterns = ["random", "locality"]
+                    patterns = ["random"]
+                    patterns.extend(
+                        f"window_{window_rows}"
+                        for window_rows in args.locality_window_rows
+                    )
                     if args.trace_file is not None:
                         patterns.append("recorded")
                     for pattern in patterns:
@@ -557,10 +682,12 @@ def run_rank(
                                 rank,
                                 block_stat,
                                 tiledb_stats,
+                                array_layout == "node",
                             )
                             results.append(
                                 {
                                     "backend": backend,
+                                    "array_layout": array_layout,
                                     "tile_extent_rows": tile_extent,
                                     "query_chunk_rows": query_chunk_rows,
                                     "cache_mode": cache_mode,
@@ -585,6 +712,7 @@ def percentile(values: list[float], quantile: float) -> float:
 def result_key(row: dict[str, Any]) -> tuple[Any, ...]:
     return (
         row["backend"],
+        row["array_layout"],
         row["tile_extent_rows"],
         row["query_chunk_rows"],
         row["cache_mode"],
@@ -659,34 +787,29 @@ def aggregate_rank_results(
                 "rank_tiledb_stats": [
                     sample.get("tiledb_stats") for sample in rank_samples
                 ],
-                "staging_allocation_ms": slowest_rank_sample["phase_metrics"][
-                    "staging_allocation_ms"
+                "rank_phase_metrics": [
+                    sample["phase_metrics"] for sample in rank_samples
                 ],
-                "indices_d2h_ms": slowest_rank_sample["phase_metrics"][
-                    "indices_d2h_ms"
-                ],
-                "tiledb_read_ms": slowest_rank_sample["phase_metrics"][
-                    "tiledb_read_ms"
-                ],
-                "cpu_reorder_ms": slowest_rank_sample["phase_metrics"][
-                    "cpu_reorder_ms"
-                ],
-                "rows_h2d_ms": slowest_rank_sample["phase_metrics"]["rows_h2d_ms"],
-                "index_bytes": slowest_rank_sample["phase_metrics"]["index_bytes"],
-                "raw_staging_bytes": slowest_rank_sample["phase_metrics"][
-                    "raw_staging_bytes"
-                ],
-                "output_bytes": slowest_rank_sample["phase_metrics"]["output_bytes"],
+                **{
+                    field: slowest_rank_sample["phase_metrics"][field]
+                    for field in (*PHASE_TIMING_FIELDS, *PHASE_COUNT_FIELDS)
+                },
+                **{
+                    field: slowest_rank_sample.get("tiledb_stats", {}).get(field)
+                    for field in (*TILEDB_STAT_TIMING_FIELDS, *TILEDB_STAT_COUNT_FIELDS)
+                },
             }
             aggregate_samples.append(sample)
             raw_samples.append(
                 {
                     "backend": key[0],
-                    "tile_extent_rows": key[1],
-                    "query_chunk_rows": key[2],
-                    "cache_mode": key[3],
-                    "pattern": key[4],
-                    "batch_size": key[5],
+                    "array_layout": key[1],
+                    "tile_extent_rows": key[2],
+                    "query_chunk_rows": key[3],
+                    "cache_mode": key[4],
+                    "pattern": key[5],
+                    "batch_size": key[6],
+                    "width": row_bytes // np.dtype(np.float32).itemsize,
                     **sample,
                 }
             )
@@ -706,85 +829,92 @@ def aggregate_rank_results(
             for sample in aggregate_samples
             if sample["device_read_bytes"] is not None
         ]
-        results.append(
-            {
-                "backend": key[0],
-                "tile_extent_rows": key[1],
-                "query_chunk_rows": key[2],
-                "cache_mode": key[3],
-                "pattern": key[4],
-                "batch_size": key[5],
-                "world_size": world_size,
-                "latency_mean_ms": statistics.mean(latencies),
-                "latency_p50_ms": percentile(latencies, 50),
-                "latency_p95_ms": percentile(latencies, 95),
-                "rows_per_second": total_rows / wall_seconds,
-                "useful_gib_per_second": useful_bytes / wall_seconds / 1024**3,
-                "storage_read_gib": storage_read_bytes / 1024**3,
-                "storage_read_gib_per_second": storage_read_bytes
-                / wall_seconds
-                / 1024**3,
-                "process_read_gib": process_read_bytes / 1024**3,
-                "device_read_gib": (
-                    sum(device_values) / 1024**3 if device_values else None
-                ),
-                "storage_counter_source": "device" if device_values else "process",
-                "read_amplification": storage_read_bytes / useful_bytes
-                if useful_bytes
-                else 0.0,
-                "process_cpu_percent": sum(
-                    sample["cpu_seconds"] for sample in aggregate_samples
+        result = {
+            "backend": key[0],
+            "array_layout": key[1],
+            "tile_extent_rows": key[2],
+            "query_chunk_rows": key[3],
+            "cache_mode": key[4],
+            "pattern": key[5],
+            "batch_size": key[6],
+            "width": row_bytes // np.dtype(np.float32).itemsize,
+            "world_size": world_size,
+            "latency_mean_ms": statistics.mean(latencies),
+            "latency_p50_ms": percentile(latencies, 50),
+            "latency_p95_ms": percentile(latencies, 95),
+            "rows_per_second": total_rows / wall_seconds,
+            "useful_gib_per_second": useful_bytes / wall_seconds / 1024**3,
+            "storage_read_gib": storage_read_bytes / 1024**3,
+            "storage_read_gib_per_second": storage_read_bytes / wall_seconds / 1024**3,
+            "process_read_gib": process_read_bytes / 1024**3,
+            "device_read_gib": (
+                sum(device_values) / 1024**3 if device_values else None
+            ),
+            "storage_counter_source": "device" if device_values else "process",
+            "read_amplification": storage_read_bytes / useful_bytes
+            if useful_bytes
+            else 0.0,
+            "process_cpu_percent": sum(
+                sample["cpu_seconds"] for sample in aggregate_samples
+            )
+            / wall_seconds
+            * 100.0,
+            "unique_row_fraction": sum(
+                sample["unique_rows"] for sample in aggregate_samples
+            )
+            / total_rows,
+            "contiguous_ranges_mean": statistics.mean(
+                sample["contiguous_ranges"] for sample in aggregate_samples
+            ),
+            "estimated_tiles_touched_mean": (
+                statistics.mean(
+                    sample["estimated_tiles_touched"] for sample in aggregate_samples
                 )
-                / wall_seconds
-                * 100.0,
-                "unique_row_fraction": sum(
-                    sample["unique_rows"] for sample in aggregate_samples
-                )
-                / total_rows,
-                "contiguous_ranges_mean": statistics.mean(
-                    sample["contiguous_ranges"] for sample in aggregate_samples
-                ),
-                "estimated_tiles_touched_mean": (
-                    statistics.mean(
-                        sample["estimated_tiles_touched"]
-                        for sample in aggregate_samples
-                    )
-                    if aggregate_samples[0]["estimated_tiles_touched"] is not None
-                    else None
-                ),
-                "cuda_peak_temporary_bytes": max(
-                    sample["cuda_peak_temporary_bytes"] for sample in aggregate_samples
-                ),
-                "aggregate_rss_peak_bytes": max(
-                    sample["rss_bytes_after"] for sample in aggregate_samples
-                ),
-                "staging_allocation_mean_ms": statistics.mean(
-                    sample["staging_allocation_ms"] for sample in aggregate_samples
-                ),
-                "indices_d2h_mean_ms": statistics.mean(
-                    sample["indices_d2h_ms"] for sample in aggregate_samples
-                ),
-                "tiledb_read_mean_ms": statistics.mean(
-                    sample["tiledb_read_ms"] for sample in aggregate_samples
-                ),
-                "cpu_reorder_mean_ms": statistics.mean(
-                    sample["cpu_reorder_ms"] for sample in aggregate_samples
-                ),
-                "rows_h2d_mean_ms": statistics.mean(
-                    sample["rows_h2d_ms"] for sample in aggregate_samples
-                ),
-                "index_bytes_peak_per_rank": max(
-                    sample["index_bytes"] for sample in aggregate_samples
-                ),
-                "raw_staging_bytes_peak_per_rank": max(
-                    sample["raw_staging_bytes"] for sample in aggregate_samples
-                ),
-                "output_bytes_peak_per_rank": max(
-                    sample["output_bytes"] for sample in aggregate_samples
-                ),
-                "samples": sample_count,
-            }
-        )
+                if aggregate_samples[0]["estimated_tiles_touched"] is not None
+                else None
+            ),
+            "cuda_peak_temporary_bytes": max(
+                sample["cuda_peak_temporary_bytes"] for sample in aggregate_samples
+            ),
+            "aggregate_rss_peak_bytes": max(
+                sample["rss_bytes_after"] for sample in aggregate_samples
+            ),
+            "index_bytes_peak_per_rank": max(
+                sample["index_bytes"] for sample in aggregate_samples
+            ),
+            "raw_staging_bytes_peak_per_rank": max(
+                sample["raw_staging_bytes"] for sample in aggregate_samples
+            ),
+            "output_bytes_peak_per_rank": max(
+                sample["output_bytes"] for sample in aggregate_samples
+            ),
+            "samples": sample_count,
+        }
+        for field in PHASE_TIMING_FIELDS:
+            result[f"{field[:-3]}_mean_ms"] = statistics.mean(
+                sample[field] for sample in aggregate_samples
+            )
+        for field in PHASE_COUNT_FIELDS[:4]:
+            result[f"{field}_mean"] = statistics.mean(
+                sample[field] for sample in aggregate_samples
+            )
+        for field in TILEDB_STAT_TIMING_FIELDS:
+            values = [
+                sample[field]
+                for sample in aggregate_samples
+                if sample[field] is not None
+            ]
+            result[f"{field[:-3]}_mean_ms"] = (
+                statistics.mean(values) if values else None
+            )
+        for field in TILEDB_STAT_COUNT_FIELDS:
+            values = [
+                sample[field]
+                for sample in aggregate_samples
+                if sample[field] is not None
+            ]
+            result[f"{field}_mean"] = statistics.mean(values) if values else None
+        results.append(result)
     return results, raw_samples, rank_metadata
 
 
@@ -865,20 +995,28 @@ def system_metadata(
         "dataset_gib": sum(path.stat().st_size for path in raw_paths) / 1024**3,
         "batch_sizes": args.batch_sizes,
         "tile_extents": args.tile_extents,
+        "array_layouts": args.array_layouts,
+        "locality_window_rows": args.locality_window_rows,
         "query_chunk_rows": args.query_chunk_rows,
         "repetitions": args.repetitions,
         "warmup": args.warmup,
         "seed": args.seed,
         "patterns": [
             "random",
-            "locality",
+            *(f"window_{window_rows}" for window_rows in args.locality_window_rows),
             *(["recorded"] if args.trace_file is not None else []),
         ],
         "trace_file": str(args.trace_file) if args.trace_file is not None else None,
         "consolidated": args.consolidate,
+        "tiledb_compute_concurrency": os.getenv(
+            "WHOLEMEMORY_TILEDB_COMPUTE_CONCURRENCY"
+        ),
+        "tiledb_io_concurrency": os.getenv("WHOLEMEMORY_TILEDB_IO_CONCURRENCY"),
+        "cuda_visible_devices": os.getenv("CUDA_VISIBLE_DEVICES"),
+        "process_cpu_affinity": sorted(os.sched_getaffinity(0)),
         "cpu_baseline": "WholeMemory distributed/cpu (cudaMallocHost)",
         "cuda_baseline": "WholeMemory distributed/cuda",
-        "cold_cache_method": "POSIX_FADV_DONTNEED per rank-local TileDB file before each sample",
+        "cold_cache_method": "POSIX_FADV_DONTNEED before each sample; rank 0 evicts node-shared arrays",
         "aggregate_latency": "maximum rank latency per synchronized sample",
         "storage_counter": "block-device sectors when available, otherwise summed process read_bytes",
     }
@@ -944,38 +1082,55 @@ def main() -> None:
         raise ValueError(f"unknown backends: {sorted(unknown)}")
     if any(value < 0 for value in args.query_chunk_rows):
         raise ValueError("query chunk rows must be nonnegative")
+    unknown_layouts = set(args.array_layouts) - {"rank", "node"}
+    if unknown_layouts or not args.array_layouts:
+        raise ValueError(
+            f"array layouts must contain rank and/or node, got {sorted(unknown_layouts)}"
+        )
+    if any(window_rows <= 0 for window_rows in args.locality_window_rows):
+        raise ValueError("locality window rows must be positive")
 
     args.data_dir.mkdir(parents=True, exist_ok=True)
     partition, offsets = equal_partition(args.rows, args.world_size)
-    raw_paths = []
-    for rank, (row_count, row_offset) in enumerate(
-        zip(partition, offsets, strict=True)
-    ):
-        raw_path = args.data_dir / (
-            f"features-{args.rows}x{args.width}-float32-part-{rank}-of-{args.world_size}.bin"
-        )
-        prepare_raw_partition(
-            raw_path, row_offset, row_count, args.width, args.overwrite
-        )
-        raw_paths.append(raw_path)
+    raw_path = args.data_dir / f"features-{args.rows}x{args.width}-float32-global.bin"
+    prepare_raw_partition(raw_path, 0, args.rows, args.width, args.overwrite)
+    raw_paths = [raw_path]
 
-    array_templates: dict[int, str] = {}
+    array_templates: dict[tuple[int, str], str] = {}
     suffix = "-consolidated" if args.consolidate else ""
     if "tiledb" in args.backends:
         for extent in args.tile_extents:
-            template = str(
-                args.data_dir
-                / f"features-tile-{extent}{suffix}-rank-{{rank}}-of-{args.world_size}.tdb"
-            )
-            array_templates[extent] = template
-            for rank, (row_count, row_offset) in enumerate(
-                zip(partition, offsets, strict=True)
-            ):
+            if "rank" in args.array_layouts:
+                template = str(
+                    args.data_dir
+                    / f"features-{args.rows}x{args.width}-tile-{extent}{suffix}-rank-{{rank}}-of-{args.world_size}.tdb"
+                )
+                array_templates[(extent, "rank")] = template
+                for rank, (row_count, row_offset) in enumerate(
+                    zip(partition, offsets, strict=True)
+                ):
+                    prepare_tiledb_array(
+                        raw_path,
+                        Path(template.replace("{rank}", str(rank))),
+                        row_offset,
+                        row_count,
+                        args.width,
+                        extent,
+                        args.consolidate,
+                        args.overwrite,
+                        input_row_offset=row_offset,
+                    )
+            if "node" in args.array_layouts:
+                node_uri = str(
+                    args.data_dir
+                    / f"features-{args.rows}x{args.width}-tile-{extent}{suffix}-node.tdb"
+                )
+                array_templates[(extent, "node")] = node_uri
                 prepare_tiledb_array(
-                    raw_paths[rank],
-                    Path(template.replace("{rank}", str(rank))),
-                    row_offset,
-                    row_count,
+                    raw_path,
+                    Path(node_uri),
+                    0,
+                    args.rows,
                     args.width,
                     extent,
                     args.consolidate,

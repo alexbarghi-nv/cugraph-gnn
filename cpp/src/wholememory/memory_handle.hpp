@@ -32,23 +32,26 @@ wholememory_error_code_t create_wholememory(wholememory_handle_t* wholememory_ha
                                             size_t data_granularity,
                                             size_t* rank_entry_partition = nullptr) noexcept;
 
-wholememory_error_code_t create_tiledb_wholememory(wholememory_handle_t* wholememory_handle_ptr,
-                                                   const char* array_uri,
-                                                   size_t total_size,
-                                                   wholememory_comm_t comm,
-                                                   size_t data_granularity,
-                                                   size_t* rank_entry_partition = nullptr) noexcept;
+wholememory_error_code_t create_tiledb_wholememory(
+  wholememory_handle_t* wholememory_handle_ptr,
+  const char* array_uri,
+  size_t total_size,
+  wholememory_comm_t comm,
+  size_t data_granularity,
+  size_t* rank_entry_partition,
+  wholememory_tiledb_array_layout_t array_layout) noexcept;
 
-wholememory_error_code_t tiledb_read_rows_from_handle(wholememory_handle_t wholememory_handle,
-                                                      const void* ids,
-                                                      wholememory_dtype_t id_dtype,
-                                                      size_t id_count,
-                                                      size_t column_byte_offset,
-                                                      size_t output_row_bytes,
-                                                      void* raw_rows,
-                                                      size_t raw_rows_size,
-                                                      void* output,
-                                                      double* cpu_reorder_ms) noexcept;
+wholememory_error_code_t tiledb_read_rows_from_handle(
+  wholememory_handle_t wholememory_handle,
+  const void* ids,
+  wholememory_dtype_t id_dtype,
+  size_t id_count,
+  size_t column_byte_offset,
+  size_t output_row_bytes,
+  void* raw_rows,
+  size_t raw_rows_size,
+  void* output,
+  wholememory_tiledb_gather_metrics_t* metrics) noexcept;
 
 wholememory_error_code_t destroy_wholememory_with_comm_locked(
   wholememory_handle_t wholememory_handle) noexcept;
