@@ -6,6 +6,9 @@ processes use one NCCL/WholeMemory communicator and visible GPUs 4-7. The launch
 processes and their memory allocations to CPU socket/NUMA node 1, which is local to the GPUs and
 `/dev/nvme1n1` on the RTX PRO 6000 test node.
 
+For machine setup, preflight gates, smoke testing, restart behavior, and result handoff, follow
+[TILEDB_LOADING_BENCHMARK_RUNBOOK.md](TILEDB_LOADING_BENCHMARK_RUNBOOK.md).
+
 Run the complete width matrix with:
 
 ```bash
