@@ -6,6 +6,9 @@ Host: `dgx19`
 
 Updated: 2026-08-25 with the eight-GPU RTX PRO 6000 NVMe results.
 
+Updated: 2026-08-27 with the four-rank colocated loading-benchmark runbook (focused GPU-compaction
+matrix) on GPUs 4-7 / NUMA node 1.
+
 ## Executive summary
 
 The TileDB-enabled library and Python packages build successfully in an isolated Conda environment.
@@ -447,6 +450,85 @@ Aggregate JSON, CSV, raw-sample CSV, and per-rank checkpoints are under
 `rtx6000-pro-8gpu-consolidated`. The generated arrays remain outside the checkout in separate
 49 GiB directories under `/raid/abarghi/wholememory-tiledb-rtx6000-{unconsolidated,consolidated}`.
 
+## Four-rank colocated loading benchmark (RTX PRO 6000 GPUs 4-7, NUMA node 1)
+
+Executed the operational runbook in
+[`TILEDB_LOADING_BENCHMARK_RUNBOOK.md`](TILEDB_LOADING_BENCHMARK_RUNBOOK.md) on host
+`4u8g-tur-0037` at commit `801e67dba63cecbc10ff0a9ee117164d2269fb9a` (tip of
+`prototype/tiledb-backend`; working tree clean, no local remote named `fork` — `origin` already
+points at the fork).
+
+- Data/result paths: `/raid/abarghi/wholememory-tiledb-loading-20260827T194011Z` and
+  `/raid/abarghi/wholememory-tiledb-loading-results-20260827T194011Z` (kept on `/raid`, not in
+  Git).
+- Environment: recreated activation of `/raid/abarghi/.local/share/mamba/envs/tiledb-wg`
+  (`RAPIDS_CUDA_VERSION=12.9`). `./build.sh libwholegraph pylibwholegraph tests --enable-tiledb`
+  succeeded.
+- Preflight: GPUs 4-7 idle/healthy (0% util, 14 MiB used each), NUMA affinity 1 for both GPUs 4-7
+  and the `nvme1` controller, 1.5 TiB free on `/raid`, 2.2 TiB available memory, no unrelated
+  `nvme1n1` traffic.
+- C++ TileDB storage tests: 5/5 PASS.
+- Correctness regression (`TEST_WM_TILEDB_WORLD_SIZE=4`, `CUDA_VISIBLE_DEVICES=4,5,6,7`,
+  `numactl --cpunodebind=1 --membind=1`): 1 passed.
+- Smoke matrix (`ROWS=262144 WIDTHS=128 REPETITIONS=2 WARMUP=1`): both CSVs, the aggregate JSON,
+  and 4 rank checkpoints present and nonempty; CPU, rank-local TileDB, and node-shared TileDB rows
+  all present; all latencies finite/positive; GPU sort/dedup/expand present with CPU sort/dedup at
+  zero; 72 cold TileDB rows all reported nonzero `device_read_gib`; every rank's CPU affinity fell
+  in NUMA node 1 (cores 64-127/192-255).
+- Focused GPU-compaction matrix (`run_tiledb_gpu_compaction_benchmark.sh`, new dataset at
+  `.../wholememory-tiledb-loading-20260827T194011Z/full`): completed with exit 0 in
+  approximately 22.5 minutes total (19:47:28-20:10:00 UTC). Per-phase elapsed: width 128 locality
+  ~35 s, width 512 locality ~10 m 21 s, width 2,048 locality ~7 m 16 s, random sentinel ~1 m 55 s,
+  layout spot check ~2 m 25 s.
+
+| Result set | Cases | Samples |
+|---|---:|---:|
+| `gpu-compaction-locality-width-128` | 20 | 100 |
+| `gpu-compaction-locality-width-512` | 20 | 100 |
+| `gpu-compaction-locality-width-2048` | 20 | 100 |
+| `gpu-compaction-random-width-2048` | 3 | 9 |
+| `gpu-compaction-layout-width-2048` | 8 | 40 |
+| **Total** | **71** | **349** |
+
+All 349 samples matched the expected count from the runbook. Every full-row locality case reported
+`id_sort_mean_ms == 0`, `id_deduplicate_mean_ms == 0`, and `cpu_reorder_mean_ms == 0` (CPU
+sort/dedup/reorder bypassed by GPU compaction, as expected). No NaN/infinite/non-positive latencies
+and no `storage_unique_rows_mean > storage_requested_rows_mean` violations were found across any
+result set, so the optional complete matrix (runbook step 6) was not run.
+
+Sequential cold-storage baseline (buffered sequential read of all rank partitions):
+
+| Width | Total bytes | Mean throughput |
+|---:|---:|---:|
+| 128 | 8 GiB | 3.268 GiB/s |
+| 512 | 32 GiB | 3.173 GiB/s |
+| 2,048 | 128 GiB | 3.200 GiB/s |
+
+### Deviations from the runbook
+
+1. `git fetch fork` — no `fork` remote exists in this checkout; `origin` already points at the
+   fork (`alexbarghi-nv/cugraph-gnn`), so `git fetch origin` was used instead. The branch was
+   already at tip.
+2. Activating the environment via `micromamba activate` in a non-interactive shell did not run
+   the env's `etc/conda/activate.d` hooks, so `LD_LIBRARY_PATH` was not set and
+   `import pylibwholegraph.binding.wholememory_binding` failed with a missing-`.so` error.
+   Explicitly exporting `LD_LIBRARY_PATH=<env>/lib` fixed this.
+3. The runbook's literal correctness command
+   (`python -m pytest ... pylibwholegraph/tests/pylibwholegraph/test_tiledb_tensor.py`) reproduces
+   the same import-shadowing failure mode already described above under "Eight-GPU RTX PRO 6000
+   NVMe verification," but this time in the four spawned rank subprocesses rather than the parent:
+   pytest's package-name resolution walks the `__init__.py` chain and re-registers
+   `sys.modules['pylibwholegraph']` from the source tree (no compiled extension), and that
+   source-tree resolution is what each `multiprocessing` "spawn" rank re-imports by dotted name,
+   since the installed wheel does not ship a `tests` subpackage for that dotted path to resolve
+   against. Fixed without altering the test by (a) pre-importing the installed
+   `pylibwholegraph`/`pylibwholegraph.binding.wholememory_binding` before invoking `pytest.main()`,
+   and (b) symlinking the source `pylibwholegraph/tests` directory into the installed
+   site-packages `pylibwholegraph/` so the dotted path
+   `pylibwholegraph.tests.pylibwholegraph.test_tiledb_tensor` resolves identically, and
+   consistently against the compiled binding, in both the parent and every spawned rank process.
+   Invoked as `pytest -q --pyargs pylibwholegraph.tests.pylibwholegraph.test_tiledb_tensor`.
+
 ## Additional findings
 
 ### Partition-list API mismatch
@@ -486,11 +568,14 @@ communication.
 5. [x] Run the enhanced benchmark with eight RTX PRO 6000 ranks on local NVMe, including TileDB
    statistics, query-chunk and consolidation sweeps, device staging observations, and an otherwise
    idle block device.
-6. [ ] Run the new four-rank colocated loading matrix on CPU socket/NUMA node 1 and RTX PRO 6000
+6. [x] Run the new four-rank colocated loading matrix on CPU socket/NUMA node 1 and RTX PRO 6000
    GPUs 4-7. Compare pinned CPU with rank-local and node-shared TileDB arrays across vector widths,
    locality windows, and cache states. The benchmark now separates ID routing, D2H, decode, sort,
    deduplication, range construction, query setup/submit, CPU reorder, H2D, embedding exchange, and
-   output reorder, with nested TileDB planning/I/O timers retained separately.
+   output reorder, with nested TileDB planning/I/O timers retained separately. The focused
+   GPU-compaction matrix (2026-08-27) completed with no regressions; the optional full matrix
+   (156 aggregate cases/width) was not yet run — do that before drawing a final performance
+   conclusion.
 7. [ ] Develop and run the TabICLv2 fine-tuning benchmark as a separate effort after the loading
    matrix is operational.
 
@@ -512,3 +597,6 @@ communication.
 | True multi-node test | BLOCKED: no second node |
 | Single-GPU cold NVMe benchmark | PASS: DGX Spark GB10 |
 | Eight-GPU NVMe benchmark | PASS: RTX PRO 6000, unconsolidated and consolidated |
+| Four-rank colocated loading benchmark, correctness/smoke | PASS: GPUs 4-7, NUMA node 1 |
+| Four-rank focused GPU-compaction matrix | PASS: 349/349 samples, no regressions |
+| Four-rank complete loading matrix (all widths, 10 reps) | NOT YET RUN |

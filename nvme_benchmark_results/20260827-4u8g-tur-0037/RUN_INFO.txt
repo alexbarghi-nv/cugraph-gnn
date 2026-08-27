@@ -1,0 +1,4 @@
+run_id=20260827T194011Z
+data_dir=/raid/abarghi/wholememory-tiledb-loading-20260827T194011Z
+result_dir=/raid/abarghi/wholememory-tiledb-loading-results-20260827T194011Z
+801e67dba63cecbc10ff0a9ee117164d2269fb9a
