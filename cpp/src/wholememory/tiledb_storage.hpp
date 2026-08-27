@@ -55,7 +55,8 @@ class tiledb_read_only_storage {
                                               size_t output_row_bytes,
                                               void* raw_rows,
                                               size_t raw_rows_size,
-                                              void* output) const;
+                                              void* output,
+                                              bool ids_are_sorted_unique = false) const;
 
   [[nodiscard]] std::string const& uri() const noexcept;
   [[nodiscard]] size_t row_bytes() const noexcept;

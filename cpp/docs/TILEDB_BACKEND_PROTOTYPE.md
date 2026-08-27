@@ -87,12 +87,15 @@ feature_store.put_tensor(features, group_name="paper", attr_name="x")
 The gather pipeline is:
 
 1. bucket and exchange global ids on the existing CUDA stream;
-2. copy the ids to a CUDA-pinned host buffer;
-3. sort/deduplicate ids and coalesce adjacent ids into TileDB ranges;
-4. ask TileDB to read full rows directly into a caller-owned pinned buffer;
-5. restore duplicates and request order, including WholeMemory column slices, into a pinned buffer;
-6. asynchronously stage the selected rows to a device send buffer;
-7. use the existing NCCL all-to-all and CUDA reorder to produce the normal CUDA output tensor.
+2. sort and deduplicate the owner-local ids on GPU while building an original-position-to-unique-row
+   mapping;
+3. copy only the sorted unique ids to a CUDA-pinned host buffer;
+4. coalesce adjacent unique ids into TileDB ranges and read each unique row once;
+5. asynchronously copy only the unique selected rows to GPU;
+6. use WholeMemory's CUDA gather kernel to expand duplicates and restore the owner send-buffer
+   order;
+7. use the existing NCCL all-to-all and final CUDA reorder to produce the normal CUDA output
+   tensor.
 
 Pinned host allocation is therefore supported and used. This prototype does **not** pass host
 pointers directly to NCCL: NCCL's documented user-buffer registration path describes CUDA/VMM or
@@ -100,6 +103,10 @@ pointers directly to NCCL: NCCL's documented user-buffer registration path descr
 copy is the compatibility baseline. It also means the first prototype does not reduce the peak
 device send-buffer size versus the CPU backend; it removes resident feature storage from host/device
 memory. A later optimization can chunk TileDB reads and communication to bound that staging buffer.
+The compact host buffers and unique-row device buffer scale with the unique id count. The existing
+full-size device send buffer remains because the first implementation expands rows before NCCL; a
+future deduplication-aware exchange could defer expansion to the requesting GPU and reduce NCCL
+traffic as well.
 
 ## Intentional prototype limits
 
@@ -131,9 +138,10 @@ id traces.
 
 `python/pylibwholegraph/benchmarks/tiledb_feature_fetch_benchmark.py` supports multiple local GPU
 ranks, raw sample retention, block-device counters, TileDB statistics, staging phase timings,
-recorded `.npy` ID traces, both array layouts, consolidated arrays, and query-chunk sweeps. Aggregate latency is the
-slowest rank in each synchronized sample; aggregate throughput counts requested bytes from all
-ranks. The phase metrics include `cpu_reorder_ms`, which isolates the final host-side scatter that
-restores request order, expands duplicate IDs, and applies a WholeMemory column slice. It excludes
-ID sorting/deduplication, TileDB range construction and query execution, and the H2D copy. The
+recorded `.npy` ID traces, both array layouts, consolidated arrays, and query-chunk sweeps. Aggregate
+latency is the slowest rank in each synchronized sample; aggregate throughput counts requested
+bytes from all ranks. The phase metrics separately expose GPU sort, GPU deduplication/map creation,
+unique-id D2H, TileDB query work, optional compact CPU column-slice copying, unique-row H2D, GPU
+duplicate expansion, NCCL exchange, and final output reorder. Full-row gathers read TileDB directly
+into the compact pinned H2D buffer and therefore have no CPU reorder/copy stage. The
 focused colocated matrix and launcher are documented in [TILEDB_LOADING_BENCHMARK.md](TILEDB_LOADING_BENCHMARK.md).

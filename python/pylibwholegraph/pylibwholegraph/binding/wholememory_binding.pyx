@@ -168,6 +168,8 @@ cdef extern from "wholememory/wholememory.h":
     cdef struct wholememory_tiledb_gather_metrics_t:
         int valid
         double id_routing_ms
+        double gpu_sort_ms
+        double gpu_deduplicate_ms
         double staging_allocation_ms
         double indices_d2h_ms
         double tiledb_read_ms
@@ -179,6 +181,7 @@ cdef extern from "wholememory/wholememory.h":
         double query_submit_ms
         double cpu_reorder_ms
         double rows_h2d_ms
+        double gpu_expand_ms
         double embedding_exchange_ms
         double output_reorder_ms
         size_t storage_requested_rows
@@ -1060,6 +1063,8 @@ def get_last_tiledb_gather_metrics():
     return {
         "valid": metrics.valid != 0,
         "id_routing_ms": metrics.id_routing_ms,
+        "gpu_sort_ms": metrics.gpu_sort_ms,
+        "gpu_deduplicate_ms": metrics.gpu_deduplicate_ms,
         "staging_allocation_ms": metrics.staging_allocation_ms,
         "indices_d2h_ms": metrics.indices_d2h_ms,
         "tiledb_read_ms": metrics.tiledb_read_ms,
@@ -1071,6 +1076,7 @@ def get_last_tiledb_gather_metrics():
         "query_submit_ms": metrics.query_submit_ms,
         "cpu_reorder_ms": metrics.cpu_reorder_ms,
         "rows_h2d_ms": metrics.rows_h2d_ms,
+        "gpu_expand_ms": metrics.gpu_expand_ms,
         "embedding_exchange_ms": metrics.embedding_exchange_ms,
         "output_reorder_ms": metrics.output_reorder_ms,
         "storage_requested_rows": metrics.storage_requested_rows,

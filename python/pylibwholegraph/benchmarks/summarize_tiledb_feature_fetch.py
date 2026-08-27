@@ -110,10 +110,15 @@ def round_row(row: dict[str, Any], configuration: str) -> dict[str, Any]:
         "storage_read_gib_per_second": round(row["storage_read_gib_per_second"], 3),
         "read_amplification": round(row["read_amplification"], 2),
         "process_cpu_percent": round(row["process_cpu_percent"], 1),
+        "gpu_sort_mean_ms": round(row.get("gpu_sort_mean_ms", 0.0), 3),
+        "gpu_deduplicate_mean_ms": round(
+            row.get("gpu_deduplicate_mean_ms", 0.0), 3
+        ),
         "indices_d2h_mean_ms": round(row.get("indices_d2h_mean_ms", 0.0), 3),
         "tiledb_read_mean_ms": round(row.get("tiledb_read_mean_ms", 0.0), 3),
         "cpu_reorder_mean_ms": round(row.get("cpu_reorder_mean_ms", 0.0), 3),
         "rows_h2d_mean_ms": round(row.get("rows_h2d_mean_ms", 0.0), 3),
+        "gpu_expand_mean_ms": round(row.get("gpu_expand_mean_ms", 0.0), 3),
         "samples": row["samples"],
     }
 
@@ -504,23 +509,38 @@ def main() -> None:
                             "format": "number",
                         },
                         {
+                            "field": "gpu_sort_mean_ms",
+                            "label": "GPU sort ms",
+                            "format": "number",
+                        },
+                        {
+                            "field": "gpu_deduplicate_mean_ms",
+                            "label": "GPU dedup ms",
+                            "format": "number",
+                        },
+                        {
                             "field": "indices_d2h_mean_ms",
-                            "label": "IDs D2H ms",
+                            "label": "Unique IDs D2H ms",
                             "format": "number",
                         },
                         {
                             "field": "tiledb_read_mean_ms",
-                            "label": "TileDB + reorder ms",
+                            "label": "TileDB read ms",
                             "format": "number",
                         },
                         {
                             "field": "cpu_reorder_mean_ms",
-                            "label": "CPU reorder ms",
+                            "label": "CPU compact copy ms",
                             "format": "number",
                         },
                         {
                             "field": "rows_h2d_mean_ms",
-                            "label": "Rows H2D ms",
+                            "label": "Unique rows H2D ms",
+                            "format": "number",
+                        },
+                        {
+                            "field": "gpu_expand_mean_ms",
+                            "label": "GPU expand ms",
                             "format": "number",
                         },
                     ],
@@ -626,7 +646,7 @@ def main() -> None:
                     "body": (
                         "## Limitations and omitted instrumentation\n\n"
                         "This is a single-machine synthetic benchmark, not an application trace. `POSIX_FADV_DONTNEED` is advisory, and device counters can include unrelated host activity. "
-                        "The benchmark records TileDB statistics when requested, CUDA allocator and process-RSS observations, and staging-allocation, stream-wait/D2H, TileDB-read-plus-reorder, CPU output-reorder, and H2D timings. It does not yet separate routing wait from D2H, ID preprocessing from query execution, TileDB's internal planning from tile reads, or NCCL phases. "
+                        "The benchmark records TileDB statistics when requested, CUDA allocator and process-RSS observations, and separate routing, GPU sort/dedup, unique-ID D2H, TileDB query, compact CPU copy, unique-row H2D, GPU expansion, NCCL, and final-reorder timings. TileDB's internal timers overlap and are diagnostic rather than an additive decomposition. "
                         "Torch allocator peaks may not capture allocations made outside its allocator."
                     ),
                 },
@@ -637,7 +657,7 @@ def main() -> None:
                         "## Recommended next steps\n\n"
                         "1. Compare unbounded and bounded query chunks, consolidated and unconsolidated arrays, and smaller tile extents before selecting a default.\n"
                         "2. Use TileDB statistics and a representative sampler trace to explain amplification beyond tile granularity.\n"
-                        "3. Profile D2H, query, reorder, H2D, and NCCL phases with Nsight Systems before implementing overlap or persistent staging.\n"
+                        "3. Profile GPU compaction, D2H, query, H2D, GPU expansion, and NCCL with Nsight Systems before implementing overlap or persistent staging.\n"
                         "4. If TileDB remains uncompetitive for random traces, compare it with a row-addressable direct-I/O layout."
                     ),
                 },

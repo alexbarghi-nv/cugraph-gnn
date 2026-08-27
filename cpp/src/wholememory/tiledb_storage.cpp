@@ -163,7 +163,8 @@ tiledb_read_metrics tiledb_read_only_storage::read_rows(const void* ids,
                                                         size_t output_row_bytes,
                                                         void* raw_rows,
                                                         size_t raw_rows_size,
-                                                        void* output) const
+                                                        void* output,
+                                                        bool ids_are_sorted_unique) const
 {
   tiledb_read_metrics metrics{};
   metrics.requested_rows = id_count;
@@ -197,23 +198,32 @@ tiledb_read_metrics tiledb_read_only_storage::read_rows(const void* ids,
   }
   metrics.id_decode_ms = elapsed_ms(phase_start);
 
-  phase_start = std::chrono::steady_clock::now();
-  std::sort(sorted_ids.begin(), sorted_ids.end(), [](auto const& lhs, auto const& rhs) {
-    return lhs.local_id < rhs.local_id ||
-           (lhs.local_id == rhs.local_id && lhs.original_position < rhs.original_position);
-  });
-  metrics.id_sort_ms = elapsed_ms(phase_start);
-
-  phase_start = std::chrono::steady_clock::now();
   std::vector<int64_t> unique_ids;
   unique_ids.reserve(sorted_ids.size());
-  for (auto const& item : sorted_ids) {
-    if (unique_ids.empty() || item.local_id != unique_ids.back()) {
+  if (ids_are_sorted_unique) {
+    for (auto const& item : sorted_ids) {
+      if (!unique_ids.empty() && item.local_id <= unique_ids.back()) {
+        throw std::invalid_argument("pre-compacted TileDB ids must be sorted and unique");
+      }
       unique_ids.push_back(item.local_id);
     }
+  } else {
+    phase_start = std::chrono::steady_clock::now();
+    std::sort(sorted_ids.begin(), sorted_ids.end(), [](auto const& lhs, auto const& rhs) {
+      return lhs.local_id < rhs.local_id ||
+             (lhs.local_id == rhs.local_id && lhs.original_position < rhs.original_position);
+    });
+    metrics.id_sort_ms = elapsed_ms(phase_start);
+
+    phase_start = std::chrono::steady_clock::now();
+    for (auto const& item : sorted_ids) {
+      if (unique_ids.empty() || item.local_id != unique_ids.back()) {
+        unique_ids.push_back(item.local_id);
+      }
+    }
+    metrics.id_deduplicate_ms = elapsed_ms(phase_start);
   }
-  metrics.id_deduplicate_ms = elapsed_ms(phase_start);
-  metrics.unique_rows       = unique_ids.size();
+  metrics.unique_rows = unique_ids.size();
 
   // TileDB contexts can service concurrent work, but the array object is shared by this handle.
   // Serialize query setup/submission until per-thread array handles are justified by measurements.
@@ -284,6 +294,11 @@ tiledb_read_metrics tiledb_read_only_storage::read_rows(const void* ids,
     }
     tiledb_subarray_free(&subarray);
     tiledb_query_free(&query);
+  }
+
+  if (ids_are_sorted_unique && raw_rows == output && column_byte_offset == 0 &&
+      output_row_bytes == impl_->row_bytes) {
+    return metrics;
   }
 
   auto const reorder_start = std::chrono::steady_clock::now();

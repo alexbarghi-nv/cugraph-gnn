@@ -17,6 +17,22 @@ python/pylibwholegraph/benchmarks/run_tiledb_loading_benchmark.sh \
   /raid/abarghi/wholememory-tiledb-loading-results
 ```
 
+For GPU-compaction validation and TabICLv2-like locality, prefer the focused runner:
+
+```bash
+python/pylibwholegraph/benchmarks/run_tiledb_gpu_compaction_benchmark.sh \
+  /raid/abarghi/wholememory-tiledb-loading \
+  /raid/abarghi/wholememory-tiledb-gpu-compaction-results
+```
+
+Its primary matrix keeps all three widths but uses one node-shared array, 256- and 4,096-row tiles,
+8,192- and 65,536-row batches, 256- and 4,096-row locality windows, both cache modes, two warmups,
+and five measurements. It adds one width-2,048 random sentinel and one width-2,048 node/rank spot
+check. At the defaults this is 71 configurations, 349 measured samples, and 488 synchronized gather
+rounds, compared with 468 configurations, 4,680 samples, and 6,084 rounds in the complete matrix.
+Existing arrays are reused when their benchmark marker matches, so point the launcher at the prior
+full-run data directory and use a new output directory.
+
 The default matrix covers:
 
 - vector widths 128, 512, and 2,048 float32 values;
@@ -38,6 +54,9 @@ ROWS=1048576 WIDTHS="128" REPETITIONS=3 WARMUP=1 \
   python/pylibwholegraph/benchmarks/run_tiledb_loading_benchmark.sh DATA_DIR OUTPUT_DIR
 ```
 
+The underlying benchmark also accepts `--patterns` and `--cache-modes`, allowing a caller to avoid
+the default random/locality and cold/warm Cartesian products.
+
 `TILEDB_COMPUTE_CONCURRENCY` and `TILEDB_IO_CONCURRENCY` default to 8 per rank. Four ranks therefore
 avoid creating four full-machine TileDB worker pools. Both values and the inherited CPU affinity
 are recorded in the result metadata.
@@ -49,18 +68,19 @@ reads, read amplification, CPU time, RSS, and peak CUDA temporary allocation. Ti
 record these non-overlapping implementation boundaries where possible:
 
 1. WholeMemory ID routing and exchange;
-2. pinned staging allocation;
-3. ID D2H;
-4. ID decode/global-to-array-coordinate conversion;
-5. CPU sort;
-6. deduplication;
+2. GPU ID sort;
+3. GPU deduplication and inverse-map construction;
+4. compact pinned staging allocation;
+5. unique-ID D2H;
+6. ID decode/global-to-array-coordinate conversion;
 7. TileDB query allocation/setup;
 8. adjacent-ID range construction and subarray insertion;
 9. `tiledb_query_submit`, which encloses TileDB planning, tile I/O, unfiltering, and result copying;
-10. CPU request-order/duplicate restoration;
-11. row H2D;
-12. WholeMemory embedding exchange;
-13. final GPU output reorder.
+10. optional CPU copy for WholeMemory column slices (zero for a full-row gather);
+11. unique-row H2D;
+12. GPU duplicate expansion into owner send-buffer order;
+13. WholeMemory embedding exchange;
+14. final GPU output reorder.
 
 With `--tiledb-stats`, each sample additionally records a compact selection of TileDB's nested
 internal timers: tile-overlap planning, relevant-tile overlap, subarray partitioning, tile reads,

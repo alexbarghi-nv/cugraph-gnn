@@ -106,12 +106,20 @@ def tiledb_routine(world_rank: int, world_size: int):
         assert metrics["raw_staging_bytes"] > 0
         assert metrics["output_bytes"] > 0
         assert metrics["tiledb_read_ms"] >= 0
-        assert metrics["id_sort_ms"] >= 0
+        assert metrics["gpu_sort_ms"] >= 0
+        assert metrics["gpu_deduplicate_ms"] >= 0
+        assert metrics["id_sort_ms"] == 0
+        assert metrics["id_deduplicate_ms"] == 0
         assert metrics["range_build_ms"] >= 0
         assert metrics["query_submit_ms"] >= 0
         assert metrics["cpu_reorder_ms"] >= 0
+        assert metrics["gpu_expand_ms"] >= 0
         assert metrics["storage_requested_rows"] > 0
         assert metrics["storage_unique_rows"] > 0
+        assert metrics["storage_unique_rows"] <= metrics["storage_requested_rows"]
+        assert metrics["index_bytes"] == metrics["storage_unique_rows"] * 8
+        assert metrics["raw_staging_bytes"] == metrics["storage_unique_rows"] * 2 * 4
+        assert metrics["output_bytes"] == metrics["storage_unique_rows"] * 2 * 4
         assert metrics["storage_range_count"] > 0
         assert metrics["storage_query_count"] > 0
         with pytest.raises(NotImplementedError, match="^Not supported$"):

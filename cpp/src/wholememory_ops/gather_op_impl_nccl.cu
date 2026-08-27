@@ -16,6 +16,7 @@
 #include "wholememory_ops/functions/exchange_embeddings_nccl_func.h"
 #include "wholememory_ops/functions/exchange_ids_nccl_func.h"
 #include "wholememory_ops/functions/gather_scatter_func.h"
+#include "wholememory_ops/functions/sort_indices_func.h"
 #include "wholememory_ops/gather_op_impl.h"
 #include "wholememory_ops/temp_memory_handle.hpp"
 #include "wholememory_ops/thrust_allocator.hpp"
@@ -157,24 +158,80 @@ wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememor
       last_tiledb_gather_metrics.valid         = 1;
       last_tiledb_gather_metrics.id_routing_ms = id_routing_ms;
       auto phase_start                         = std::chrono::steady_clock::now();
+      temp_memory_handle dev_tiledb_sorted_indices(p_env_fns);
+      temp_memory_handle dev_tiledb_sorted_positions(p_env_fns);
+      temp_memory_handle dev_tiledb_unique_indices(p_env_fns);
+      temp_memory_handle dev_tiledb_inverse_indices(p_env_fns);
+      void* dev_tiledb_sorted_indices_ptr =
+        dev_tiledb_sorted_indices.device_malloc(total_recv_count, indice_desc.dtype);
+      void* dev_tiledb_sorted_positions_ptr =
+        dev_tiledb_sorted_positions.device_malloc(total_recv_count, indice_desc.dtype);
+      void* dev_tiledb_unique_indices_ptr =
+        dev_tiledb_unique_indices.device_malloc(total_recv_count, indice_desc.dtype);
+      auto* dev_tiledb_inverse_indices_ptr = static_cast<int64_t*>(
+        dev_tiledb_inverse_indices.device_malloc(total_recv_count, WHOLEMEMORY_DT_INT64));
+
+      int64_t unique_recv_count = 0;
+      if (total_recv_count > 0) {
+        // TileDB has a high per-row storage cost compared with resident memory. Compact on the
+        // owner GPU so the CPU query and both host transfers contain each requested row once.
+        phase_start = std::chrono::steady_clock::now();
+        WHOLEMEMORY_RETURN_ON_FAIL(sort_indices_func(dev_recv_indice_buffer.pointer(),
+                                                     dev_recv_indice_desc,
+                                                     dev_tiledb_sorted_indices_ptr,
+                                                     dev_tiledb_sorted_positions_ptr,
+                                                     &thrust_allocator,
+                                                     p_env_fns,
+                                                     stream));
+        WM_CUDA_CHECK(cudaStreamSynchronize(stream));
+        last_tiledb_gather_metrics.gpu_sort_ms = elapsed_ms(phase_start);
+
+        phase_start = std::chrono::steady_clock::now();
+        WHOLEMEMORY_RETURN_ON_FAIL(compact_sorted_unique_indices_func(
+          dev_tiledb_sorted_indices_ptr,
+          dev_tiledb_sorted_positions_ptr,
+          dev_recv_indice_desc,
+          dev_tiledb_unique_indices_ptr,
+          dev_tiledb_inverse_indices_ptr,
+          &unique_recv_count,
+          &thrust_allocator,
+          stream));
+        last_tiledb_gather_metrics.gpu_deduplicate_ms = elapsed_ms(phase_start);
+      }
+
+      phase_start = std::chrono::steady_clock::now();
       temp_memory_handle host_tiledb_indices(p_env_fns);
       temp_memory_handle host_tiledb_raw_rows(p_env_fns);
       temp_memory_handle host_tiledb_gather_rows(p_env_fns);
+      temp_memory_handle dev_tiledb_unique_rows(p_env_fns);
+      auto const output_row_bytes =
+        wholememory_desc.sizes[1] * wholememory_dtype_get_element_size(output_desc.dtype);
+      auto const gather_bytes = unique_recv_count * output_row_bytes;
+      auto const direct_full_row_read = wholememory_desc.storage_offset == 0 &&
+                                        output_row_bytes == embedding_entry_size;
       void* host_tiledb_indices_ptr =
-        host_tiledb_indices.pinned_malloc(total_recv_count, indice_desc.dtype);
-      void* host_tiledb_raw_rows_ptr = host_tiledb_raw_rows.pinned_malloc(
-        total_recv_count * embedding_entry_size, WHOLEMEMORY_DT_INT8);
+        host_tiledb_indices.pinned_malloc(unique_recv_count, indice_desc.dtype);
       void* host_tiledb_gather_rows_ptr = host_tiledb_gather_rows.pinned_malloc(
-        total_recv_count * wholememory_desc.sizes[1], output_desc.dtype);
+        unique_recv_count * wholememory_desc.sizes[1], output_desc.dtype);
+      void* dev_tiledb_unique_rows_ptr =
+        dev_tiledb_unique_rows.device_malloc(unique_recv_count * wholememory_desc.sizes[1],
+                                             output_desc.dtype);
+      auto const raw_staging_bytes = direct_full_row_read
+                                       ? gather_bytes
+                                       : unique_recv_count * embedding_entry_size;
+      void* host_tiledb_raw_rows_ptr =
+        direct_full_row_read
+          ? host_tiledb_gather_rows_ptr
+          : host_tiledb_raw_rows.pinned_malloc(raw_staging_bytes, WHOLEMEMORY_DT_INT8);
       last_tiledb_gather_metrics.staging_allocation_ms = elapsed_ms(phase_start);
 
       auto const index_bytes =
-        total_recv_count * wholememory_dtype_get_element_size(indice_desc.dtype);
+        unique_recv_count * wholememory_dtype_get_element_size(indice_desc.dtype);
       last_tiledb_gather_metrics.index_bytes = index_bytes;
       if (index_bytes > 0) {
         phase_start = std::chrono::steady_clock::now();
         WM_CUDA_CHECK(cudaMemcpyAsync(host_tiledb_indices_ptr,
-                                      dev_recv_indice_buffer.pointer(),
+                                      dev_tiledb_unique_indices_ptr,
                                       index_bytes,
                                       cudaMemcpyDeviceToHost,
                                       stream));
@@ -183,28 +240,27 @@ wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememor
         last_tiledb_gather_metrics.indices_d2h_ms = elapsed_ms(phase_start);
       }
 
-      auto const output_row_bytes =
-        wholememory_desc.sizes[1] * wholememory_dtype_get_element_size(output_desc.dtype);
-      last_tiledb_gather_metrics.raw_staging_bytes = total_recv_count * embedding_entry_size;
+      last_tiledb_gather_metrics.raw_staging_bytes = raw_staging_bytes;
       phase_start                                  = std::chrono::steady_clock::now();
       WHOLEMEMORY_RETURN_ON_FAIL(
         wholememory::tiledb_read_rows_from_handle(wholememory_handle,
                                                   host_tiledb_indices_ptr,
                                                   indice_desc.dtype,
-                                                  total_recv_count,
+                                                  unique_recv_count,
                                                   wholememory_desc.storage_offset * element_size,
                                                   output_row_bytes,
                                                   host_tiledb_raw_rows_ptr,
-                                                  total_recv_count * embedding_entry_size,
+                                                  raw_staging_bytes,
                                                   host_tiledb_gather_rows_ptr,
+                                                  true,
                                                   &last_tiledb_gather_metrics));
       last_tiledb_gather_metrics.tiledb_read_ms = elapsed_ms(phase_start);
+      last_tiledb_gather_metrics.storage_requested_rows = total_recv_count;
 
-      auto const gather_bytes                 = total_recv_count * output_row_bytes;
       last_tiledb_gather_metrics.output_bytes = gather_bytes;
       if (gather_bytes > 0) {
         phase_start = std::chrono::steady_clock::now();
-        WM_CUDA_CHECK(cudaMemcpyAsync(dev_local_gather_buffer_ptr,
+        WM_CUDA_CHECK(cudaMemcpyAsync(dev_tiledb_unique_rows_ptr,
                                       host_tiledb_gather_rows_ptr,
                                       gather_bytes,
                                       cudaMemcpyHostToDevice,
@@ -213,6 +269,25 @@ wholememory_error_code_t wholememory_gather_nccl(wholememory_handle_t wholememor
         // same stream, and receives into the existing device buffer.
         WM_CUDA_CHECK(cudaStreamSynchronize(stream));
         last_tiledb_gather_metrics.rows_h2d_ms = elapsed_ms(phase_start);
+
+        phase_start = std::chrono::steady_clock::now();
+        auto unique_rows_desc = local_gather_buffer_desc;
+        unique_rows_desc.sizes[0] = unique_recv_count;
+        auto inverse_desc =
+          wholememory_create_array_desc(total_recv_count, 0, WHOLEMEMORY_DT_INT64);
+        auto unique_rows_gref =
+          wholememory_create_continuous_global_reference(dev_tiledb_unique_rows_ptr);
+        // Restore the exact post-routing order expected by the unchanged NCCL exchange.
+        WHOLEMEMORY_RETURN_ON_FAIL(gather_func(unique_rows_gref,
+                                               unique_rows_desc,
+                                               dev_tiledb_inverse_indices_ptr,
+                                               inverse_desc,
+                                               dev_local_gather_buffer_ptr,
+                                               local_gather_buffer_desc,
+                                               stream,
+                                               gather_sms));
+        WM_CUDA_CHECK(cudaStreamSynchronize(stream));
+        last_tiledb_gather_metrics.gpu_expand_ms = elapsed_ms(phase_start);
       }
     } else {
       void* local_fake_ptr = nullptr;

@@ -18,9 +18,11 @@ the results.
 - Preserve the checked-in matrix after the smoke test. Record any necessary deviation before
   changing it.
 
-The default datasets and six TileDB copies require approximately 1,176 GiB plus metadata. Reserve
-at least 1.3 TiB of free NVMe space. Width 2,048 also creates a 128 GiB pinned-CPU tensor, so require
-at least 160 GiB of available system memory; 256 GiB or more is preferred.
+The complete matrix's datasets and six TileDB copies require approximately 1,176 GiB plus metadata.
+The focused GPU-compaction matrix requires approximately 632 GiB when created from scratch; reserve
+at least 700 GiB for it or 1.3 TiB for the complete matrix. Width 2,048 also creates a 128 GiB
+pinned-CPU tensor, so require at least 160 GiB of available system memory; 256 GiB or more is
+preferred.
 
 ## 1. Check out the implementation
 
@@ -64,7 +66,7 @@ which wholememory_tiledb_ingest
 ./cpp/build/gtests/TILEDB_STORAGE_TEST --gtest_color=no
 ```
 
-The C++ test must pass 3/3 tests. A clean rebuild may be necessary if an old CMake cache points at a
+The C++ test must pass 5/5 tests. A clean rebuild may be necessary if an old CMake cache points at a
 different environment or CUDA architecture.
 
 ## 3. Preflight the node
@@ -91,7 +93,7 @@ Confirm all of the following before proceeding:
 2. `nvidia-smi topo -m` associates GPUs 4-7 with NUMA node 1.
 3. `/dev/nvme1n1p1` is the partition backing `/raid`, and its `nvme1` controller reports NUMA
    node 1.
-4. `/raid` has at least 1.3 TiB free.
+4. `/raid` has at least 700 GiB free for the focused matrix, or 1.3 TiB for the complete matrix.
 5. `MemAvailable` is at least 160 GiB.
 6. No unrelated workload is producing sustained traffic on `nvme1n1`.
 
@@ -150,7 +152,7 @@ wheel first; do not alter the test to bypass the compiled binding.
 Then run a small end-to-end smoke matrix:
 
 ```bash
-ROWS=131072 \
+ROWS=262144 \
 WIDTHS="128" \
 REPETITIONS=2 \
 WARMUP=1 \
@@ -166,15 +168,50 @@ Before the full run, confirm that:
 - CPU, rank-local TileDB, and node-shared TileDB rows are present;
 - all latencies are finite and positive;
 - TileDB phase metrics have `valid=true` in the rank checkpoints;
+- GPU sort/dedup/expand metrics are present, CPU sort/dedup metrics are zero, and unique staging
+  byte counts shrink for duplicate-heavy traces;
 - cold TileDB samples report physical reads from `/dev/nvme1n1`;
 - recorded CPU affinities are contained in NUMA node 1; and
 - recorded `CUDA_VISIBLE_DEVICES` is `4,5,6,7`.
 
 Do not reuse the smoke data directory for the full run because its row count differs.
 
-## 5. Run the full matrix
+## 5. Run the focused GPU-compaction matrix
 
-Start from new `full` subdirectories. The launcher fixes the communicator size, GPUs, NUMA policy,
+Reuse the previous full-run data directory when it is still available and its
+`.wholememory_benchmark.json` markers match 16,777,216 rows, the requested width, and tile extent.
+The feature values and TileDB schema did not change with GPU compaction. Always select a new result
+directory; never pass `--overwrite` merely to reuse valid arrays.
+
+Run the focused launcher:
+
+```bash
+focused_data_dir=/path/to/previous/full-data-directory
+# For a new dataset instead, use: focused_data_dir="${data_dir}/full"
+python/pylibwholegraph/benchmarks/run_tiledb_gpu_compaction_benchmark.sh \
+  "${focused_data_dir}" \
+  "${result_dir}/gpu-compaction" \
+  2>&1 | tee "${result_dir}/gpu-compaction.log"
+```
+
+The default focused run contains:
+
+- 60 primary locality configurations across widths 128, 512, and 2,048;
+- 3 width-2,048 random-sentinel configurations;
+- 8 width-2,048 node/rank TileDB layout configurations;
+- 349 measured samples and 488 synchronized rounds including warmups.
+
+The locality matrix uses two warmups and five measured repetitions. Treat its p95 values as
+directional; reserve a later 10- or 20-repetition run for configurations selected by the real
+TabICLv2 trace. TileDB internal statistics are disabled in this focused pass because the preceding
+run already isolated planning and tile-read behavior. The new WholeMemory stage timers remain
+enabled and must show GPU sort/deduplication, compact D2H/H2D, and GPU expansion.
+
+## 6. Optional complete matrix
+
+Only repeat the complete matrix when a focused result reveals a regression outside the selected
+locality cases. Start from new `full` subdirectories. The launcher fixes the communicator size,
+GPUs, NUMA policy,
 backend comparison, locality windows, cache modes, tile extents, batch sizes, and stage collection:
 
 ```bash
@@ -217,7 +254,18 @@ python/pylibwholegraph/benchmarks/run_tiledb_loading_benchmark.sh \
 Do not pass `--overwrite` or remove arrays merely to restart measurement. Use a new directory if
 array metadata is inconsistent.
 
-## 6. Validate and preserve the results
+## 7. Validate and preserve the results
+
+The focused result directory should contain three `gpu-compaction-locality-width-W` result sets,
+plus `gpu-compaction-random-width-2048` and `gpu-compaction-layout-width-2048`. Each result set has
+an aggregate JSON/CSV, raw-sample CSV, and four rank checkpoints. Check for 20 aggregate cases and
+100 measured samples in each default locality-width result, 3 cases and 9 samples in the random
+sentinel, and 8 cases and 40 samples in the layout spot check.
+
+For the focused results, verify that full-row locality cases report CPU sort, CPU deduplication, and
+CPU reorder as zero; `index_bytes`, `raw_staging_bytes`, and `output_bytes` must scale with
+`storage_unique_rows`, not `storage_requested_rows`. Preserve the stage timings even if one of the
+new GPU phases is too short to produce a visibly nonzero millisecond value.
 
 The full result directory should contain, for each width:
 

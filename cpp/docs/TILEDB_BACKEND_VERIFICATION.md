@@ -328,6 +328,17 @@ slices. Existing GB10 and RTX 6000 Pro result files predate that timer and there
 measured reorder values; a rerun is required. `tiledb_read_ms` remains the enclosing measurement and
 also includes ID sorting/deduplication, range construction, query execution, and the scatter.
 
+### Post-run GPU compaction change
+
+The implementation now sorts and deduplicates owner-local IDs on GPU after WholeMemory routing.
+Only sorted unique IDs are copied to the CPU, TileDB returns only unique rows, and only those rows
+are copied H2D. WholeMemory's CUDA gather kernel then expands them into the existing NCCL send-buffer
+order. New timers report `gpu_sort_ms`, `gpu_deduplicate_ms`, and `gpu_expand_ms`; the existing ID D2H
+and row H2D timers now measure compact transfers. CPU sort/deduplication are bypassed, and full-row
+gathers no longer need the CPU reorder/copy loop. The RTX results above predate this change and must
+not be used to estimate its speedup; rerun correctness and the loading matrix before drawing a new
+performance conclusion.
+
 The planned eight-GPU command is:
 
 ```bash

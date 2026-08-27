@@ -140,6 +140,55 @@ TEST(TileDBStorage, AcceptsGlobalIdsForALocalPartition)
   EXPECT_EQ(output[1], (std::array<int32_t, 2>{0, 1}));
 }
 
+TEST(TileDBStorage, AcceptsPrecompactedSortedUniqueIds)
+{
+  temporary_feature_array array;
+  wholememory::tiledb_read_only_storage storage(array.uri(), sizeof(std::array<int32_t, 2>), 5);
+  std::array<int64_t, 3> ids{0, 2, 4};
+  std::array<std::array<int32_t, 2>, 3> output{};
+
+  auto const metrics = storage.read_rows(ids.data(),
+                                         WHOLEMEMORY_DT_INT64,
+                                         ids.size(),
+                                         0,
+                                         0,
+                                         storage.row_bytes(),
+                                         output.data(),
+                                         sizeof(output),
+                                         output.data(),
+                                         true);
+
+  EXPECT_EQ(output[0], (std::array<int32_t, 2>{0, 1}));
+  EXPECT_EQ(output[1], (std::array<int32_t, 2>{20, 21}));
+  EXPECT_EQ(output[2], (std::array<int32_t, 2>{40, 41}));
+  EXPECT_EQ(metrics.id_sort_ms, 0.0);
+  EXPECT_EQ(metrics.id_deduplicate_ms, 0.0);
+  EXPECT_EQ(metrics.cpu_reorder_ms, 0.0);
+  EXPECT_EQ(metrics.requested_rows, ids.size());
+  EXPECT_EQ(metrics.unique_rows, ids.size());
+}
+
+TEST(TileDBStorage, RejectsInvalidPrecompactedIds)
+{
+  temporary_feature_array array;
+  wholememory::tiledb_read_only_storage storage(array.uri(), sizeof(std::array<int32_t, 2>), 5);
+  std::array<int64_t, 3> ids{0, 2, 2};
+  std::vector<unsigned char> raw(ids.size() * storage.row_bytes());
+  std::array<int32_t, 3> output{};
+
+  EXPECT_THROW(static_cast<void>(storage.read_rows(ids.data(),
+                                                   WHOLEMEMORY_DT_INT64,
+                                                   ids.size(),
+                                                   0,
+                                                   0,
+                                                   sizeof(int32_t),
+                                                   raw.data(),
+                                                   raw.size(),
+                                                   output.data(),
+                                                   true)),
+               std::invalid_argument);
+}
+
 TEST(TileDBStorage, BoundedQueriesPreserveOrderingAndDuplicates)
 {
   temporary_feature_array array;

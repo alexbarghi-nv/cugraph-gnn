@@ -92,6 +92,8 @@ enum LogLevel {
 typedef struct wholememory_tiledb_gather_metrics_t {
   int valid;
   double id_routing_ms;
+  double gpu_sort_ms;
+  double gpu_deduplicate_ms;
   double staging_allocation_ms;
   double indices_d2h_ms;
   double tiledb_read_ms;
@@ -103,6 +105,7 @@ typedef struct wholememory_tiledb_gather_metrics_t {
   double query_submit_ms;
   double cpu_reorder_ms;
   double rows_h2d_ms;
+  double gpu_expand_ms;
   double embedding_exchange_ms;
   double output_reorder_ms;
   size_t storage_requested_rows;

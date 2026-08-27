@@ -449,7 +449,8 @@ class tiledb_wholememory_impl : public wholememory_impl {
                                               size_t output_row_bytes,
                                               void* raw_rows,
                                               size_t raw_rows_size,
-                                              void* output) const
+                                              void* output,
+                                              bool ids_are_sorted_unique) const
   {
     WHOLEMEMORY_CHECK(storage_ != nullptr);
     auto const global_row_offset = array_layout_ == WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED
@@ -463,7 +464,8 @@ class tiledb_wholememory_impl : public wholememory_impl {
                                output_row_bytes,
                                raw_rows,
                                raw_rows_size,
-                               output);
+                               output,
+                               ids_are_sorted_unique);
   }
 
  private:
@@ -2112,6 +2114,7 @@ wholememory_error_code_t tiledb_read_rows_from_handle(
   void* raw_rows,
   size_t raw_rows_size,
   void* output,
+  bool ids_are_sorted_unique,
   wholememory_tiledb_gather_metrics_t* metrics) noexcept
 {
 #ifndef WITH_TILEDB_SUPPORT
@@ -2124,6 +2127,7 @@ wholememory_error_code_t tiledb_read_rows_from_handle(
   (void)raw_rows;
   (void)raw_rows_size;
   (void)output;
+  (void)ids_are_sorted_unique;
   (void)metrics;
   return WHOLEMEMORY_NOT_SUPPORTED;
 #else
@@ -2142,7 +2146,8 @@ wholememory_error_code_t tiledb_read_rows_from_handle(
                                                      output_row_bytes,
                                                      raw_rows,
                                                      raw_rows_size,
-                                                     output);
+                                                     output,
+                                                     ids_are_sorted_unique);
     metrics->id_decode_ms           = read_metrics.id_decode_ms;
     metrics->id_sort_ms             = read_metrics.id_sort_ms;
     metrics->id_deduplicate_ms      = read_metrics.id_deduplicate_ms;

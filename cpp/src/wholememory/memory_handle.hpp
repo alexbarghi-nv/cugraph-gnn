@@ -51,6 +51,7 @@ wholememory_error_code_t tiledb_read_rows_from_handle(
   void* raw_rows,
   size_t raw_rows_size,
   void* output,
+  bool ids_are_sorted_unique,
   wholememory_tiledb_gather_metrics_t* metrics) noexcept;
 
 wholememory_error_code_t destroy_wholememory_with_comm_locked(
