@@ -78,6 +78,17 @@ TILEDB_STAT_COUNT_FIELDS = (
     "tiledb_vfs_read_bytes",
 )
 
+OVERLAP_CASES = {
+    "independent": {"within_rank_repeat": 1, "cross_rank_shared": False},
+    "cross_rank_25": {"within_rank_repeat": 1, "cross_rank_shared": True},
+    "within_rank_25": {"within_rank_repeat": 4, "cross_rank_shared": False},
+    "combined_12_5": {"within_rank_repeat": 2, "cross_rank_shared": True},
+    "combined_6_25": {"within_rank_repeat": 4, "cross_rank_shared": True},
+    "combined_3_125": {"within_rank_repeat": 8, "cross_rank_shared": True},
+    "stress_1": {"within_rank_repeat": 25, "cross_rank_shared": True},
+}
+OVERLAP_PLACEMENTS = ("clustered", "scattered")
+
 
 def parse_int_list(value: str) -> list[int]:
     return [int(item) for item in value.split(",") if item]
@@ -115,6 +126,21 @@ def parse_args() -> argparse.Namespace:
             "Access patterns to run; defaults to random plus every configured "
             "window and the recorded trace when supplied"
         ),
+    )
+    parser.add_argument(
+        "--overlap-cases",
+        type=lambda value: [item for item in value.split(",") if item],
+        default=[],
+        help=(
+            "Generate exact synthetic overlap cases: "
+            + ",".join(OVERLAP_CASES)
+        ),
+    )
+    parser.add_argument(
+        "--overlap-placements",
+        type=lambda value: [item for item in value.split(",") if item],
+        default=[],
+        help="Unique-row placement for overlap cases: clustered,scattered",
     )
     parser.add_argument(
         "--cache-modes",
@@ -275,14 +301,123 @@ def warm_file_cache(root: Path) -> None:
                 pass
 
 
+def overlap_pattern(case: str, placement: str) -> str:
+    return f"overlap_{placement}_{case}"
+
+
+def overlap_pattern_spec(pattern: str) -> dict[str, Any] | None:
+    for placement in OVERLAP_PLACEMENTS:
+        prefix = f"overlap_{placement}_"
+        if pattern.startswith(prefix):
+            case = pattern[len(prefix) :]
+            if case in OVERLAP_CASES:
+                return {
+                    "case": case,
+                    "placement": placement,
+                    **OVERLAP_CASES[case],
+                }
+    return None
+
+
+def coprime_multiplier(rows: int, seed: int) -> int:
+    candidate = 1 + 2 * (seed % max(1, rows // 2))
+    while math.gcd(candidate, rows) != 1:
+        candidate += 2
+        if candidate >= rows:
+            candidate = 1
+    return candidate
+
+
+def make_overlap_host_ids(
+    rows: int,
+    batch_size: int,
+    seed: int,
+    rank: int,
+    world_size: int,
+    case: str,
+    placement: str,
+    sample_index: int,
+) -> np.ndarray:
+    spec = OVERLAP_CASES[case]
+    repeat = int(spec["within_rank_repeat"])
+    shared = bool(spec["cross_rank_shared"])
+    if batch_size % repeat != 0:
+        raise ValueError(
+            f"batch size {batch_size} must be divisible by overlap repeat {repeat}"
+        )
+    unique_count = batch_size // repeat
+    required_unique_rows = unique_count if shared else unique_count * world_size
+    if required_unique_rows > rows:
+        raise ValueError(
+            f"overlap case {case} requires {required_unique_rows} distinct rows, "
+            f"but the array contains {rows}"
+        )
+
+    case_index = list(OVERLAP_CASES).index(case)
+    placement_index = OVERLAP_PLACEMENTS.index(placement)
+    trace_seed = (
+        seed
+        + batch_size * 17
+        + sample_index * 104_729
+        + case_index * 1_000_003
+        + placement_index * 10_000_019
+    )
+    rank_slot = 0 if shared else rank
+    ordinal_start = rank_slot * unique_count
+    ordinals = np.arange(
+        ordinal_start, ordinal_start + unique_count, dtype=np.int64
+    )
+    if placement == "clustered":
+        span_start = trace_seed % (rows - required_unique_rows + 1)
+        unique_ids = ordinals + span_start
+    elif placement == "scattered":
+        multiplier = coprime_multiplier(rows, trace_seed)
+        offset = (trace_seed * 6_364_136_223_846_793_005 + 1) % rows
+        unique_ids = (ordinals * multiplier + offset) % rows
+    else:
+        raise ValueError(f"unknown overlap placement: {placement}")
+
+    ids = np.repeat(unique_ids, repeat)
+    generator = np.random.default_rng(trace_seed + rank * 1_000_000_007)
+    return generator.permutation(ids).astype(np.int64, copy=False)
+
+
+def make_overlap_ids(
+    rows: int,
+    batch_size: int,
+    seed: int,
+    rank: int,
+    world_size: int,
+    case: str,
+    placement: str,
+    sample_index: int,
+) -> torch.Tensor:
+    return torch.from_numpy(
+        make_overlap_host_ids(
+            rows,
+            batch_size,
+            seed,
+            rank,
+            world_size,
+            case,
+            placement,
+            sample_index,
+        )
+    )
+
+
 def make_traces(
     rows: int,
     batch_sizes: list[int],
     trace_count: int,
     seed: int,
     rank: int,
+    world_size: int,
     trace_file: Path | None,
     locality_window_rows: list[int],
+    overlap_cases: list[str],
+    overlap_placements: list[str],
+    selected_patterns: list[str],
 ) -> dict[tuple[str, int], list[torch.Tensor]]:
     traces: dict[tuple[str, int], list[torch.Tensor]] = {}
     patterns: list[tuple[str, int | None]] = [("random", None)]
@@ -291,6 +426,8 @@ def make_traces(
     )
     for batch_size in batch_sizes:
         for pattern_index, (pattern, window_rows) in enumerate(patterns):
+            if pattern not in selected_patterns:
+                continue
             generator = torch.Generator(device="cpu")
             generator.manual_seed(
                 seed + rank * 1_000_003 + batch_size * 17 + pattern_index
@@ -313,7 +450,28 @@ def make_traces(
                     ids = start + offsets
                 host_traces.append(ids.to(dtype=torch.int64))
             traces[(pattern, batch_size)] = [ids.cuda() for ids in host_traces]
-    if trace_file is not None:
+        for placement in overlap_placements:
+            for case in overlap_cases:
+                pattern = overlap_pattern(case, placement)
+                if pattern not in selected_patterns:
+                    continue
+                host_traces = [
+                    make_overlap_ids(
+                        rows,
+                        batch_size,
+                        seed,
+                        rank,
+                        world_size,
+                        case,
+                        placement,
+                        sample_index,
+                    )
+                    for sample_index in range(trace_count)
+                ]
+                traces[(pattern, batch_size)] = [
+                    ids.cuda() for ids in host_traces
+                ]
+    if trace_file is not None and "recorded" in selected_patterns:
         recorded = np.load(trace_file, mmap_mode="r")
         if recorded.ndim == 2:
             rank_recorded = recorded
@@ -342,17 +500,80 @@ def make_traces(
     return traces
 
 
-def trace_metrics(ids: torch.Tensor, tile_extent: int | None) -> dict[str, int | None]:
+def trace_metrics(
+    ids: torch.Tensor,
+    tile_extent: int | None,
+    owner_boundaries: list[int],
+) -> dict[str, Any]:
     host = np.sort(np.unique(ids.cpu().numpy()))
     ranges = 0 if host.size == 0 else 1 + int(np.count_nonzero(np.diff(host) != 1))
     tiles = (
         int(np.unique(host // tile_extent).size) if tile_extent is not None else None
     )
+    owners = np.searchsorted(
+        np.asarray(owner_boundaries[1:], dtype=np.int64), host, side="right"
+    )
+    owner_unique_counts = np.bincount(
+        owners, minlength=len(owner_boundaries) - 1
+    ).tolist()
     return {
         "requested_rows": int(ids.numel()),
         "unique_rows": int(host.size),
         "contiguous_ranges": ranges,
         "estimated_tiles_touched": tiles,
+        "owner_unique_counts": owner_unique_counts,
+    }
+
+
+def aggregate_trace_overlap_metrics(
+    rank_samples: list[dict[str, Any]], pattern: str, world_size: int
+) -> dict[str, Any]:
+    pattern_spec = overlap_pattern_spec(pattern)
+    requested_rows = sum(sample["requested_rows"] for sample in rank_samples)
+    within_rank_unique_rows = sum(sample["unique_rows"] for sample in rank_samples)
+    if pattern_spec is None:
+        node_unique_rows = None
+        requesting_ranks_per_unique_row = None
+        owner_unique_counts = None
+    elif pattern_spec["cross_rank_shared"]:
+        node_unique_rows = rank_samples[0]["unique_rows"]
+        owner_unique_counts = rank_samples[0]["owner_unique_counts"]
+        requesting_ranks_per_unique_row = world_size
+    else:
+        node_unique_rows = within_rank_unique_rows
+        owner_unique_counts = [
+            sum(sample["owner_unique_counts"][owner] for sample in rank_samples)
+            for owner in range(world_size)
+        ]
+        requesting_ranks_per_unique_row = 1
+    owner_unique_mean = (
+        statistics.mean(owner_unique_counts)
+        if owner_unique_counts is not None
+        else None
+    )
+    owner_unique_max = (
+        max(owner_unique_counts) if owner_unique_counts is not None else None
+    )
+    return {
+        "requested_rows": requested_rows,
+        "unique_rows": within_rank_unique_rows,
+        "node_unique_rows": node_unique_rows,
+        "within_rank_unique_row_fraction": within_rank_unique_rows / requested_rows,
+        "node_unique_row_fraction": (
+            node_unique_rows / requested_rows
+            if node_unique_rows is not None
+            else None
+        ),
+        "within_rank_repetition": requested_rows / within_rank_unique_rows,
+        "requesting_ranks_per_unique_row": requesting_ranks_per_unique_row,
+        "owner_unique_rows_mean": owner_unique_mean,
+        "owner_unique_rows_max": owner_unique_max,
+        "owner_unique_max_to_mean": (
+            owner_unique_max / owner_unique_mean
+            if owner_unique_mean is not None and owner_unique_mean > 0
+            else None
+        ),
+        "owner_unique_counts": owner_unique_counts,
     }
 
 
@@ -504,6 +725,7 @@ def benchmark_case(
     block_stat: Path | None,
     tiledb_stats: TileDBStats,
     shared_cache_root: bool,
+    owner_boundaries: list[int],
 ) -> list[dict[str, Any]]:
     for index in range(warmup):
         output = tensor.gather(traces[index % len(traces)])
@@ -560,7 +782,7 @@ def benchmark_case(
             "cuda_peak_temporary_bytes": cuda_peak,
             "rss_bytes_after": process.memory_info().rss,
             "phase_metrics": phase_metrics,
-            **trace_metrics(trace, tile_extent),
+            **trace_metrics(trace, tile_extent, owner_boundaries),
         }
         if collect_tiledb_stats:
             sample["tiledb_stats"] = tiledb_stats.dump_selected()
@@ -603,8 +825,12 @@ def run_rank(
         args.warmup + args.repetitions,
         args.seed,
         rank,
+        world_size,
         args.trace_file,
         args.locality_window_rows,
+        args.overlap_cases,
+        args.overlap_placements,
+        args.patterns,
     )
     results: list[dict[str, Any]] = []
     tiledb_stats = TileDBStats(args.tiledb_stats)
@@ -693,6 +919,7 @@ def run_rank(
                                 block_stat,
                                 tiledb_stats,
                                 array_layout == "node",
+                                [*offsets, args.rows],
                             )
                             results.append(
                                 {
@@ -749,6 +976,7 @@ def aggregate_rank_results(
     results: list[dict[str, Any]] = []
     raw_samples: list[dict[str, Any]] = []
     for key in keys:
+        pattern_spec = overlap_pattern_spec(key[5])
         rank_rows = [rows[key] for rows in rows_by_rank]
         sample_count = len(rank_rows[0]["samples"])
         if any(len(row["samples"]) != sample_count for row in rank_rows):
@@ -767,7 +995,9 @@ def aggregate_rank_results(
             process_read_bytes = sum(
                 sample["process_read_bytes"] for sample in rank_samples
             )
-            requested_rows = sum(sample["requested_rows"] for sample in rank_samples)
+            trace_summary = aggregate_trace_overlap_metrics(
+                rank_samples, key[5], world_size
+            )
             sample = {
                 "sample": sample_index,
                 "latency_ms": max(sample["latency_ms"] for sample in rank_samples),
@@ -778,8 +1008,7 @@ def aggregate_rank_results(
                 if device_reads
                 else process_read_bytes,
                 "cpu_seconds": sum(sample["cpu_seconds"] for sample in rank_samples),
-                "requested_rows": requested_rows,
-                "unique_rows": sum(sample["unique_rows"] for sample in rank_samples),
+                **trace_summary,
                 "contiguous_ranges": sum(
                     sample["contiguous_ranges"] for sample in rank_samples
                 ),
@@ -819,6 +1048,14 @@ def aggregate_rank_results(
                     "cache_mode": key[4],
                     "pattern": key[5],
                     "batch_size": key[6],
+                    "overlap_case": (
+                        pattern_spec["case"] if pattern_spec is not None else None
+                    ),
+                    "overlap_placement": (
+                        pattern_spec["placement"]
+                        if pattern_spec is not None
+                        else None
+                    ),
                     "width": row_bytes // np.dtype(np.float32).itemsize,
                     **sample,
                 }
@@ -847,6 +1084,12 @@ def aggregate_rank_results(
             "cache_mode": key[4],
             "pattern": key[5],
             "batch_size": key[6],
+            "overlap_case": (
+                pattern_spec["case"] if pattern_spec is not None else None
+            ),
+            "overlap_placement": (
+                pattern_spec["placement"] if pattern_spec is not None else None
+            ),
             "width": row_bytes // np.dtype(np.float32).itemsize,
             "world_size": world_size,
             "latency_mean_ms": statistics.mean(latencies),
@@ -873,6 +1116,52 @@ def aggregate_rank_results(
                 sample["unique_rows"] for sample in aggregate_samples
             )
             / total_rows,
+            "within_rank_unique_row_fraction": sum(
+                sample["unique_rows"] for sample in aggregate_samples
+            )
+            / total_rows,
+            "node_unique_row_fraction": (
+                sum(sample["node_unique_rows"] for sample in aggregate_samples)
+                / total_rows
+                if aggregate_samples[0]["node_unique_rows"] is not None
+                else None
+            ),
+            "within_rank_repetition_mean": statistics.mean(
+                sample["within_rank_repetition"] for sample in aggregate_samples
+            ),
+            "requesting_ranks_per_unique_row_mean": (
+                statistics.mean(
+                    sample["requesting_ranks_per_unique_row"]
+                    for sample in aggregate_samples
+                )
+                if aggregate_samples[0]["requesting_ranks_per_unique_row"]
+                is not None
+                else None
+            ),
+            "owner_unique_rows_mean": (
+                statistics.mean(
+                    sample["owner_unique_rows_mean"]
+                    for sample in aggregate_samples
+                )
+                if aggregate_samples[0]["owner_unique_rows_mean"] is not None
+                else None
+            ),
+            "owner_unique_rows_max_mean": (
+                statistics.mean(
+                    sample["owner_unique_rows_max"]
+                    for sample in aggregate_samples
+                )
+                if aggregate_samples[0]["owner_unique_rows_max"] is not None
+                else None
+            ),
+            "owner_unique_max_to_mean_mean": (
+                statistics.mean(
+                    sample["owner_unique_max_to_mean"]
+                    for sample in aggregate_samples
+                )
+                if aggregate_samples[0]["owner_unique_max_to_mean"] is not None
+                else None
+            ),
             "contiguous_ranges_mean": statistics.mean(
                 sample["contiguous_ranges"] for sample in aggregate_samples
             ),
@@ -1013,6 +1302,9 @@ def system_metadata(
         "warmup": args.warmup,
         "seed": args.seed,
         "patterns": args.patterns,
+        "overlap_cases": args.overlap_cases,
+        "overlap_placements": args.overlap_placements,
+        "overlap_case_definitions": OVERLAP_CASES,
         "trace_file": str(args.trace_file) if args.trace_file is not None else None,
         "consolidated": args.consolidate,
         "tiledb_compute_concurrency": os.getenv(
@@ -1096,20 +1388,48 @@ def main() -> None:
         )
     if any(window_rows <= 0 for window_rows in args.locality_window_rows):
         raise ValueError("locality window rows must be positive")
+    unknown_overlap_cases = set(args.overlap_cases) - set(OVERLAP_CASES)
+    if unknown_overlap_cases:
+        raise ValueError(f"unknown overlap cases: {sorted(unknown_overlap_cases)}")
+    unknown_overlap_placements = set(args.overlap_placements) - set(
+        OVERLAP_PLACEMENTS
+    )
+    if unknown_overlap_placements:
+        raise ValueError(
+            f"unknown overlap placements: {sorted(unknown_overlap_placements)}"
+        )
+    if bool(args.overlap_cases) != bool(args.overlap_placements):
+        raise ValueError(
+            "overlap cases and overlap placements must be configured together"
+        )
+    for case in args.overlap_cases:
+        repeat = int(OVERLAP_CASES[case]["within_rank_repeat"])
+        if any(batch_size % repeat != 0 for batch_size in args.batch_sizes):
+            raise ValueError(
+                f"every batch size must be divisible by {repeat} for overlap "
+                f"case {case}"
+            )
     unknown_cache_modes = set(args.cache_modes) - {"cold", "warm"}
     if unknown_cache_modes or not args.cache_modes:
         raise ValueError(
             f"cache modes must contain cold and/or warm, got {sorted(unknown_cache_modes)}"
         )
+    overlap_patterns = [
+        overlap_pattern(case, placement)
+        for placement in args.overlap_placements
+        for case in args.overlap_cases
+    ]
     available_patterns = {
         "random",
         *(f"window_{window_rows}" for window_rows in args.locality_window_rows),
+        *overlap_patterns,
         *(["recorded"] if args.trace_file is not None else []),
     }
     if args.patterns is None:
         args.patterns = [
             "random",
             *(f"window_{window_rows}" for window_rows in args.locality_window_rows),
+            *overlap_patterns,
             *(["recorded"] if args.trace_file is not None else []),
         ]
     unknown_patterns = set(args.patterns) - available_patterns

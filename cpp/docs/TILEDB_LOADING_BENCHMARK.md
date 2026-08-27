@@ -17,7 +17,44 @@ python/pylibwholegraph/benchmarks/run_tiledb_loading_benchmark.sh \
   /raid/abarghi/wholememory-tiledb-loading-results
 ```
 
-For GPU-compaction validation and TabICLv2-like locality, prefer the focused runner:
+For the next TabICLv2-oriented overlap study, use the focused overlap runner:
+
+```bash
+python/pylibwholegraph/benchmarks/run_tiledb_tabicl_overlap_benchmark.sh \
+  /raid/abarghi/wholememory-tiledb-loading \
+  /raid/abarghi/wholememory-tiledb-tabicl-overlap-results
+```
+
+It fixes width 2,048, a 256-row tile extent, one node-shared array, request sizes 48,000 and
+100,000 per rank, and the pinned-CPU comparison. Seven exact clustered overlap cases separate
+within-rank repetition from cross-rank sharing. A scattered 100,000-row sentinel compares the two
+ways to obtain 25% node-wide uniqueness, and the preceding 65,536-row window cases are retained
+only as a continuity check. The run contains 54 configurations, 270 measured samples, and 378
+synchronized rounds including warmups.
+
+The overlap cases are generated from distinct unique IDs before deliberate repetition is added:
+
+| Case | Within-rank repetition | Cross-rank sharing | Node-wide unique fraction |
+| --- | ---: | --- | ---: |
+| `independent` | 1x | none | 100% |
+| `cross_rank_25` | 1x | all four ranks | 25% |
+| `within_rank_25` | 4x | none | 25% |
+| `combined_12_5` | 2x | all four ranks | 12.5% |
+| `combined_6_25` | 4x | all four ranks | 6.25% |
+| `combined_3_125` | 8x | all four ranks | 3.125% |
+| `stress_1` | 25x | all four ranks | 1% |
+
+`clustered` places each unique rank set in a contiguous span; `scattered` applies a deterministic
+bijection across the global row space. These are controlled storage diagnostics, not claims about
+the final TabICLv2 distribution. In particular, the runner does not yet model time-series ordering
+or grouped-contiguous context sampling; those choices are deferred until an end-to-end trace is
+available.
+
+The aggregate and sample outputs add within-rank and node-wide unique fractions, mean repetition,
+requesting ranks per unique row, and owner-rank max/mean imbalance. Existing range, tile, planning,
+read, H2D, GPU expansion, NCCL, and output-reorder measurements remain unchanged.
+
+The preceding GPU-compaction validation can still be reproduced with:
 
 ```bash
 python/pylibwholegraph/benchmarks/run_tiledb_gpu_compaction_benchmark.sh \
@@ -25,7 +62,7 @@ python/pylibwholegraph/benchmarks/run_tiledb_gpu_compaction_benchmark.sh \
   /raid/abarghi/wholememory-tiledb-gpu-compaction-results
 ```
 
-Its primary matrix keeps all three widths but uses one node-shared array, 256- and 4,096-row tiles,
+That matrix keeps all three widths but uses one node-shared array, 256- and 4,096-row tiles,
 8,192- and 65,536-row batches, 256- and 4,096-row locality windows, both cache modes, two warmups,
 and five measurements. It adds one width-2,048 random sentinel and one width-2,048 node/rank spot
 check. At the defaults this is 71 configurations, 349 measured samples, and 488 synchronized gather

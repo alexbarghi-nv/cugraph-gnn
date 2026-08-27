@@ -1,4 +1,4 @@
-# RTX PRO 6000 TileDB loading benchmark runbook
+# RTX PRO 6000 TabICLv2-oriented TileDB overlap benchmark runbook
 
 This is the operational handoff for running the single-node loading benchmark on host
 `4u8g-tur-0037`. The benchmark definition and metric semantics are in
@@ -18,16 +18,16 @@ the results.
 - Preserve the checked-in matrix after the smoke test. Record any necessary deviation before
   changing it.
 
-The complete matrix's datasets and six TileDB copies require approximately 1,176 GiB plus metadata.
-The focused GPU-compaction matrix requires approximately 632 GiB when created from scratch; reserve
-at least 700 GiB for it or 1.3 TiB for the complete matrix. Width 2,048 also creates a 128 GiB
-pinned-CPU tensor, so require at least 160 GiB of available system memory; 256 GiB or more is
-preferred.
+The overlap matrix uses one 128 GiB raw width-2,048 dataset and one node-shared TileDB copy. When
+created from scratch, reserve at least 320 GiB for data, metadata, and results. Reuse the prior
+matching data directory when available. Width 2,048 also creates a 128 GiB pinned-CPU tensor, so
+require at least 160 GiB of available system memory; 256 GiB or more is preferred. The optional
+complete legacy matrix still requires approximately 1.3 TiB.
 
 ## 1. Check out the implementation
 
-Use the existing clone if it is clean. The implementation begins at commit `f655f22`; run the tip
-of `prototype/tiledb-backend` so that this runbook and any subsequent fixes are included.
+Use the existing clone if it is clean. Run the tip of `prototype/tiledb-backend` so that the exact
+overlap generator, metrics, launcher, and this runbook are included.
 
 ```bash
 git status --short
@@ -93,7 +93,8 @@ Confirm all of the following before proceeding:
 2. `nvidia-smi topo -m` associates GPUs 4-7 with NUMA node 1.
 3. `/dev/nvme1n1p1` is the partition backing `/raid`, and its `nvme1` controller reports NUMA
    node 1.
-4. `/raid` has at least 700 GiB free for the focused matrix, or 1.3 TiB for the complete matrix.
+4. `/raid` has at least 320 GiB free for a new overlap dataset, or 1.3 TiB for the optional complete
+   matrix.
 5. `MemAvailable` is at least 160 GiB.
 6. No unrelated workload is producing sustained traffic on `nvme1n1`.
 
@@ -104,8 +105,8 @@ Create new run directories and capture the preflight record:
 
 ```bash
 run_id=$(date -u +%Y%m%dT%H%M%SZ)
-data_dir=/raid/abarghi/wholememory-tiledb-loading-${run_id}
-result_dir=/raid/abarghi/wholememory-tiledb-loading-results-${run_id}
+data_dir=/raid/abarghi/wholememory-tiledb-tabicl-${run_id}
+result_dir=/raid/abarghi/wholememory-tiledb-tabicl-results-${run_id}
 mkdir -p "${data_dir}" "${result_dir}"
 
 {
@@ -149,63 +150,96 @@ All ranks must return exact values for both rank-local and node-shared arrays. I
 unbuilt source package, correct `PYTHONPATH` or run from a directory that exposes the installed
 wheel first; do not alter the test to bypass the compiled binding.
 
-Then run a small end-to-end smoke matrix:
+Then run a small end-to-end smoke matrix that exercises both sources of 25% node-wide uniqueness
+and both ID placements:
 
 ```bash
-ROWS=262144 \
-WIDTHS="128" \
-REPETITIONS=2 \
-WARMUP=1 \
-python/pylibwholegraph/benchmarks/run_tiledb_loading_benchmark.sh \
-  "${data_dir}/smoke" \
-  "${result_dir}/smoke" \
+env \
+  CUDA_VISIBLE_DEVICES=4,5,6,7 \
+  WHOLEMEMORY_TILEDB_COMPUTE_CONCURRENCY=8 \
+  WHOLEMEMORY_TILEDB_IO_CONCURRENCY=8 \
+  numactl --cpunodebind=1 --membind=1 \
+  python3 python/pylibwholegraph/benchmarks/tiledb_feature_fetch_benchmark.py \
+  --data-dir "${data_dir}/smoke" \
+  --output "${result_dir}/smoke/tabicl-overlap-smoke.json" \
+  --world-size 4 \
+  --rows 262144 \
+  --width 128 \
+  --backends cpu,tiledb \
+  --array-layouts node \
+  --tile-extents 256 \
+  --query-chunk-rows 0 \
+  --cache-modes cold,warm \
+  --overlap-cases cross_rank_25,within_rank_25 \
+  --overlap-placements clustered,scattered \
+  --patterns overlap_clustered_cross_rank_25,overlap_clustered_within_rank_25,overlap_scattered_cross_rank_25,overlap_scattered_within_rank_25 \
+  --batch-sizes 1000 \
+  --block-device /dev/nvme1n1 \
+  --warmup 1 \
+  --repetitions 2 \
   2>&1 | tee "${result_dir}/smoke.log"
 ```
 
 Before the full run, confirm that:
 
-- `smoke/loading-width-128.json`, both CSVs, and four rank checkpoints exist and are nonempty;
-- CPU, rank-local TileDB, and node-shared TileDB rows are present;
+- the smoke JSON, both CSVs, and four rank checkpoints exist and are nonempty;
+- 12 aggregate configurations and 24 measured samples are present;
+- CPU and node-shared TileDB rows are present;
 - all latencies are finite and positive;
 - TileDB phase metrics have `valid=true` in the rank checkpoints;
 - GPU sort/dedup/expand metrics are present, CPU sort/dedup metrics are zero, and unique staging
   byte counts shrink for duplicate-heavy traces;
+- `cross_rank_25` reports within-rank uniqueness 100%, node-wide uniqueness 25%, and four
+  requesting ranks per unique row;
+- `within_rank_25` reports within-rank and node-wide uniqueness 25%, 4x within-rank repetition,
+  and one requesting rank per unique row;
 - cold TileDB samples report physical reads from `/dev/nvme1n1`;
 - recorded CPU affinities are contained in NUMA node 1; and
 - recorded `CUDA_VISIBLE_DEVICES` is `4,5,6,7`.
 
 Do not reuse the smoke data directory for the full run because its row count differs.
 
-## 5. Run the focused GPU-compaction matrix
+## 5. Run the focused TabICLv2-oriented overlap matrix
 
 Reuse the previous full-run data directory when it is still available and its
 `.wholememory_benchmark.json` markers match 16,777,216 rows, the requested width, and tile extent.
 The feature values and TileDB schema did not change with GPU compaction. Always select a new result
 directory; never pass `--overwrite` merely to reuse valid arrays.
 
-Run the focused launcher:
+Run the overlap launcher. It deliberately does not yet model time-series ordering or
+grouped-contiguous random contexts; those application-specific controls wait for the end-to-end
+TabICLv2 trace.
 
 ```bash
 focused_data_dir=/path/to/previous/full-data-directory
 # For a new dataset instead, use: focused_data_dir="${data_dir}/full"
-python/pylibwholegraph/benchmarks/run_tiledb_gpu_compaction_benchmark.sh \
+python/pylibwholegraph/benchmarks/run_tiledb_tabicl_overlap_benchmark.sh \
   "${focused_data_dir}" \
-  "${result_dir}/gpu-compaction" \
-  2>&1 | tee "${result_dir}/gpu-compaction.log"
+  "${result_dir}/tabicl-overlap" \
+  2>&1 | tee "${result_dir}/tabicl-overlap.log"
 ```
 
 The default focused run contains:
 
-- 60 primary locality configurations across widths 128, 512, and 2,048;
-- 3 width-2,048 random-sentinel configurations;
-- 8 width-2,048 node/rank TileDB layout configurations;
-- 349 measured samples and 488 synchronized rounds including warmups.
+- 42 clustered configurations: seven overlap topologies at 48,000 and 100,000 requests per rank;
+- 6 scattered configurations: the paired 25%-unique topologies at 100,000 requests per rank;
+- 6 continuity configurations: the preceding 256- and 4,096-row windows at 65,536 requests per
+  rank;
+- 54 aggregate configurations, 270 measured samples, and 378 synchronized rounds including
+  warmups.
 
-The locality matrix uses two warmups and five measured repetitions. Treat its p95 values as
-directional; reserve a later 10- or 20-repetition run for configurations selected by the real
-TabICLv2 trace. TileDB internal statistics are disabled in this focused pass because the preceding
-run already isolated planning and tile-read behavior. The new WholeMemory stage timers remain
-enabled and must show GPU sort/deduplication, compact D2H/H2D, and GPU expansion.
+Every case uses width 2,048, a 256-row tile extent, one node-shared array, two warmups, and five
+measurements. Treat p95 as directional; reserve a later 10- or 20-repetition run for configurations
+selected by the real TabICLv2 trace. TileDB internal statistics are disabled because the preceding
+run already isolated planning and tile-read behavior. WholeMemory stage timers remain enabled and
+must show GPU sort/deduplication, compact D2H/H2D, and GPU expansion.
+
+The two 25%-unique cases are the primary diagnostic pair. `cross_rank_25` has no duplicates within
+a rank but sends the same unique set from all four ranks. `within_rank_25` repeats each row four
+times within one rank but gives each rank a disjoint unique set. Their node-wide unique fractions
+are identical; differences expose routing, fan-out, owner balance, NCCL exchange, and expansion
+costs that a flat unique-percentage sweep would hide. `stress_1` is a non-representative lower bound,
+not an expected TabICLv2 workload.
 
 ## 6. Optional complete matrix
 
@@ -256,16 +290,30 @@ array metadata is inconsistent.
 
 ## 7. Validate and preserve the results
 
-The focused result directory should contain three `gpu-compaction-locality-width-W` result sets,
-plus `gpu-compaction-random-width-2048` and `gpu-compaction-layout-width-2048`. Each result set has
-an aggregate JSON/CSV, raw-sample CSV, and four rank checkpoints. Check for 20 aggregate cases and
-100 measured samples in each default locality-width result, 3 cases and 9 samples in the random
-sentinel, and 8 cases and 40 samples in the layout spot check.
+The focused result directory should contain `tabicl-overlap-clustered-width-2048`,
+`tabicl-overlap-scattered-width-2048`, and `tabicl-continuity-width-2048` result sets. Each has an
+aggregate JSON/CSV, raw-sample CSV, and four rank checkpoints. Check for 42 aggregate cases and 210
+measured samples in the clustered result, 6 cases and 30 samples in the scattered result, and 6
+cases and 30 samples in the continuity result.
 
-For the focused results, verify that full-row locality cases report CPU sort, CPU deduplication, and
-CPU reorder as zero; `index_bytes`, `raw_staging_bytes`, and `output_bytes` must scale with
-`storage_unique_rows`, not `storage_requested_rows`. Preserve the stage timings even if one of the
-new GPU phases is too short to produce a visibly nonzero millisecond value.
+Verify the exact overlap invariants in every aggregate and raw sample:
+
+| Case | Within-rank unique | Node-wide unique | Repetition | Requesting ranks/unique row |
+| --- | ---: | ---: | ---: | ---: |
+| `independent` | 100% | 100% | 1x | 1 |
+| `cross_rank_25` | 100% | 25% | 1x | 4 |
+| `within_rank_25` | 25% | 25% | 4x | 1 |
+| `combined_12_5` | 50% | 12.5% | 2x | 4 |
+| `combined_6_25` | 25% | 6.25% | 4x | 4 |
+| `combined_3_125` | 12.5% | 3.125% | 8x | 4 |
+| `stress_1` | 4% | 1% | 25x | 4 |
+
+Compare `owner_unique_rows_max_mean` with `owner_unique_rows_mean` and retain the per-sample
+`owner_unique_counts`; do not explain a slow case using uniqueness alone. Full-row cases must report
+CPU sort, CPU deduplication, and CPU reorder as zero. `index_bytes`, `raw_staging_bytes`, and
+`output_bytes` must scale with `storage_unique_rows`, not `storage_requested_rows`. Preserve every
+stage timing, even if a short GPU phase rounds to zero milliseconds. Compare cold context
+construction separately from warm/cache-resident retrieval; do not average the cache modes.
 
 The full result directory should contain, for each width:
 
