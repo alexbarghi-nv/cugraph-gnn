@@ -55,12 +55,25 @@ run_benchmark \
   --storage-baseline
 
 # Scattered sentinel: hold node-wide uniqueness at 25% while changing its source.
+# Both topology cases now derive from the same node-wide unique ID set per sample.
 echo "Running scattered 25%-unique topology pair"
 run_benchmark \
   --output "${output_dir}/tabicl-overlap-scattered-width-2048.json" \
   --overlap-cases cross_rank_25,within_rank_25 \
   --overlap-placements scattered \
   --patterns overlap_scattered_cross_rank_25,overlap_scattered_within_rank_25 \
+  --batch-sizes 100000 \
+  --warmup 2 \
+  --repetitions 5
+
+# Context-shaped locality: keep the exact paired 25%-unique ID sets, but distribute
+# them across 10, 40, or 100 non-overlapping runs spanning owner partitions.
+echo "Running multi-run clustered 25%-unique topology pairs"
+run_benchmark \
+  --output "${output_dir}/tabicl-overlap-multirun-width-2048.json" \
+  --overlap-cases cross_rank_25,within_rank_25 \
+  --overlap-placements clustered_runs_10,clustered_runs_40,clustered_runs_100 \
+  --patterns overlap_clustered_runs_10_cross_rank_25,overlap_clustered_runs_10_within_rank_25,overlap_clustered_runs_40_cross_rank_25,overlap_clustered_runs_40_within_rank_25,overlap_clustered_runs_100_cross_rank_25,overlap_clustered_runs_100_within_rank_25 \
   --batch-sizes 100000 \
   --warmup 2 \
   --repetitions 5

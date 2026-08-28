@@ -15,6 +15,7 @@ import csv
 import ctypes
 import ctypes.util
 from functools import partial
+import hashlib
 import json
 import math
 import os
@@ -87,7 +88,13 @@ OVERLAP_CASES = {
     "combined_3_125": {"within_rank_repeat": 8, "cross_rank_shared": True},
     "stress_1": {"within_rank_repeat": 25, "cross_rank_shared": True},
 }
-OVERLAP_PLACEMENTS = ("clustered", "scattered")
+CLUSTERED_RUN_COUNTS = (10, 40, 100)
+OVERLAP_PLACEMENTS = (
+    "clustered",
+    "scattered",
+    *(f"clustered_runs_{count}" for count in CLUSTERED_RUN_COUNTS),
+)
+PAIRED_OVERLAP_CASES = {"cross_rank_25", "within_rank_25"}
 
 
 def parse_int_list(value: str) -> list[int]:
@@ -140,7 +147,7 @@ def parse_args() -> argparse.Namespace:
         "--overlap-placements",
         type=lambda value: [item for item in value.split(",") if item],
         default=[],
-        help="Unique-row placement for overlap cases: clustered,scattered",
+        help="Unique-row placement for overlap cases: " + ",".join(OVERLAP_PLACEMENTS),
     )
     parser.add_argument(
         "--cache-modes",
@@ -328,6 +335,115 @@ def coprime_multiplier(rows: int, seed: int) -> int:
     return candidate
 
 
+def clustered_run_count(placement: str) -> int | None:
+    prefix = "clustered_runs_"
+    return int(placement[len(prefix) :]) if placement.startswith(prefix) else None
+
+
+def make_clustered_run_ids(
+    rows: int,
+    unique_count: int,
+    run_count: int,
+    world_size: int,
+    seed: int,
+) -> np.ndarray:
+    """Create exact non-overlapping runs distributed across owner partitions."""
+    if run_count > unique_count:
+        raise ValueError(
+            f"cannot place {unique_count} unique rows in {run_count} nonempty runs"
+        )
+    partition, offsets = equal_partition(rows, world_size)
+    run_lengths = np.zeros(run_count, dtype=np.int64)
+    owner_unique_counts, _ = equal_partition(unique_count, world_size)
+    for owner in range(world_size):
+        owner_run_indices = list(range(owner, run_count, world_size))
+        if not owner_run_indices:
+            if owner_unique_counts[owner] != 0:
+                raise ValueError(
+                    f"{run_count} runs cannot distribute rows across {world_size} owners"
+                )
+            continue
+        owner_run_lengths, _ = equal_partition(
+            owner_unique_counts[owner], len(owner_run_indices)
+        )
+        run_lengths[owner_run_indices] = owner_run_lengths
+    runs: list[np.ndarray | None] = [None] * run_count
+    for owner, (owner_rows, owner_offset) in enumerate(
+        zip(partition, offsets, strict=True)
+    ):
+        owner_run_indices = list(range(owner, run_count, world_size))
+        if not owner_run_indices:
+            continue
+        owner_unique_rows = int(run_lengths[owner_run_indices].sum())
+        required_rows = owner_unique_rows + len(owner_run_indices) + 1
+        if required_rows > owner_rows:
+            raise ValueError(
+                f"owner {owner} cannot fit {owner_unique_rows} rows in "
+                f"{len(owner_run_indices)} distinct runs inside {owner_rows} rows"
+            )
+
+        # Reserve one row around partition edges and between adjacent runs, then
+        # distribute the remaining slack so samples exercise different tiles.
+        gaps = np.ones(len(owner_run_indices) + 1, dtype=np.int64)
+        remaining = owner_rows - required_rows
+        generator = np.random.default_rng(seed + owner * 1_000_000_007)
+        gaps += generator.multinomial(
+            remaining, np.full(gaps.size, 1.0 / gaps.size)
+        )
+        cursor = owner_offset + int(gaps[0])
+        for local_index, run_index in enumerate(owner_run_indices):
+            length = int(run_lengths[run_index])
+            runs[run_index] = np.arange(cursor, cursor + length, dtype=np.int64)
+            cursor += length + int(gaps[local_index + 1])
+    if any(run is None for run in runs):
+        raise RuntimeError("failed to generate every clustered run")
+    return np.concatenate([run for run in runs if run is not None])
+
+
+def overlap_trace_seed(
+    seed: int,
+    batch_size: int,
+    sample_index: int,
+    case: str,
+    placement: str,
+) -> int:
+    # The two 25%-unique cases must use the identical node-wide unique ID set.
+    # Only their assignment/repetition across ranks differs.
+    seed_case = "cross_rank_25" if case in PAIRED_OVERLAP_CASES else case
+    case_index = list(OVERLAP_CASES).index(seed_case)
+    placement_index = OVERLAP_PLACEMENTS.index(placement)
+    return (
+        seed
+        + batch_size * 17
+        + sample_index * 104_729
+        + case_index * 1_000_003
+        + placement_index * 10_000_019
+    )
+
+
+def make_node_unique_ids(
+    rows: int,
+    unique_count: int,
+    seed: int,
+    placement: str,
+    world_size: int,
+) -> np.ndarray:
+    ordinals = np.arange(unique_count, dtype=np.int64)
+    if placement == "clustered":
+        span_start = seed % (rows - unique_count + 1)
+        return ordinals + span_start
+    if placement == "scattered":
+        multiplier = coprime_multiplier(rows, seed)
+        offset = (seed * 6_364_136_223_846_793_005 + 1) % rows
+        return (ordinals * multiplier + offset) % rows
+    run_count = clustered_run_count(placement)
+    if run_count is not None:
+        return make_clustered_run_ids(
+            rows, unique_count, run_count, world_size, seed
+        )
+    raise ValueError(f"unknown overlap placement: {placement}")
+
+
 def make_overlap_host_ids(
     rows: int,
     batch_size: int,
@@ -353,29 +469,13 @@ def make_overlap_host_ids(
             f"but the array contains {rows}"
         )
 
-    case_index = list(OVERLAP_CASES).index(case)
-    placement_index = OVERLAP_PLACEMENTS.index(placement)
-    trace_seed = (
-        seed
-        + batch_size * 17
-        + sample_index * 104_729
-        + case_index * 1_000_003
-        + placement_index * 10_000_019
+    trace_seed = overlap_trace_seed(seed, batch_size, sample_index, case, placement)
+    node_unique_ids = make_node_unique_ids(
+        rows, required_unique_rows, trace_seed, placement, world_size
     )
     rank_slot = 0 if shared else rank
     ordinal_start = rank_slot * unique_count
-    ordinals = np.arange(
-        ordinal_start, ordinal_start + unique_count, dtype=np.int64
-    )
-    if placement == "clustered":
-        span_start = trace_seed % (rows - required_unique_rows + 1)
-        unique_ids = ordinals + span_start
-    elif placement == "scattered":
-        multiplier = coprime_multiplier(rows, trace_seed)
-        offset = (trace_seed * 6_364_136_223_846_793_005 + 1) % rows
-        unique_ids = (ordinals * multiplier + offset) % rows
-    else:
-        raise ValueError(f"unknown overlap placement: {placement}")
+    unique_ids = node_unique_ids[ordinal_start : ordinal_start + unique_count]
 
     ids = np.repeat(unique_ids, repeat)
     generator = np.random.default_rng(trace_seed + rank * 1_000_000_007)
@@ -575,6 +675,102 @@ def aggregate_trace_overlap_metrics(
         ),
         "owner_unique_counts": owner_unique_counts,
     }
+
+
+def node_overlap_trace_metrics(
+    rows: int,
+    batch_size: int,
+    seed: int,
+    world_size: int,
+    pattern: str,
+    sample_index: int,
+    tile_extent: int | None,
+) -> dict[str, Any]:
+    """Recreate and record the exact node-wide unique set for overlap traces."""
+    spec = overlap_pattern_spec(pattern)
+    if spec is None:
+        return {
+            "node_unique_id_sha256": None,
+            "node_contiguous_ranges": None,
+            "node_estimated_tiles_touched": None,
+            "clustered_run_count": None,
+        }
+    repeat = int(spec["within_rank_repeat"])
+    unique_per_rank = batch_size // repeat
+    node_unique_count = (
+        unique_per_rank
+        if spec["cross_rank_shared"]
+        else unique_per_rank * world_size
+    )
+    trace_seed = overlap_trace_seed(
+        seed, batch_size, sample_index, spec["case"], spec["placement"]
+    )
+    unique_ids = np.sort(
+        make_node_unique_ids(
+            rows,
+            node_unique_count,
+            trace_seed,
+            spec["placement"],
+            world_size,
+        )
+    )
+    contiguous_ranges = 1 + int(np.count_nonzero(np.diff(unique_ids) != 1))
+    return {
+        "node_unique_id_sha256": hashlib.sha256(
+            unique_ids.astype("<i8", copy=False).tobytes()
+        ).hexdigest(),
+        "node_contiguous_ranges": contiguous_ranges,
+        "node_estimated_tiles_touched": (
+            int(np.unique(unique_ids // tile_extent).size)
+            if tile_extent is not None
+            else None
+        ),
+        "clustered_run_count": clustered_run_count(spec["placement"]),
+    }
+
+
+def aggregate_rank_phase_metrics(
+    rank_samples: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Keep rank maxima/means and storage-owner phases beside legacy fields."""
+    phase_by_rank = [sample["phase_metrics"] for sample in rank_samples]
+    storage_owner_ranks = [
+        rank
+        for rank, phase in enumerate(phase_by_rank)
+        if phase["storage_requested_rows"] > 0
+    ]
+    output: dict[str, Any] = {
+        "storage_owner_ranks": storage_owner_ranks,
+        "storage_owner_count": len(storage_owner_ranks),
+    }
+    for field in PHASE_TIMING_FIELDS:
+        label = field.removesuffix("_ms")
+        values = [float(phase[field]) for phase in phase_by_rank]
+        max_rank = max(range(len(values)), key=values.__getitem__)
+        owner_values = [values[rank] for rank in storage_owner_ranks]
+        output[f"{label}_rank_max_ms"] = values[max_rank]
+        output[f"{label}_rank_mean_ms"] = statistics.mean(values)
+        output[f"{label}_rank_max_rank"] = max_rank
+        output[f"{label}_storage_owner_max_ms"] = (
+            max(owner_values) if owner_values else None
+        )
+        output[f"{label}_storage_owner_mean_ms"] = (
+            statistics.mean(owner_values) if owner_values else None
+        )
+    for field in PHASE_COUNT_FIELDS:
+        values = [int(phase[field]) for phase in phase_by_rank]
+        max_rank = max(range(len(values)), key=values.__getitem__)
+        owner_values = [values[rank] for rank in storage_owner_ranks]
+        output[f"{field}_rank_max"] = values[max_rank]
+        output[f"{field}_rank_mean"] = statistics.mean(values)
+        output[f"{field}_rank_max_rank"] = max_rank
+        output[f"{field}_storage_owner_max"] = (
+            max(owner_values) if owner_values else None
+        )
+        output[f"{field}_storage_owner_mean"] = (
+            statistics.mean(owner_values) if owner_values else None
+        )
+    return output
 
 
 def proc_io_bytes(process: psutil.Process) -> int:
@@ -959,7 +1155,13 @@ def result_key(row: dict[str, Any]) -> tuple[Any, ...]:
 
 
 def aggregate_rank_results(
-    output: Path, world_size: int, row_bytes: int
+    output: Path,
+    world_size: int,
+    row_bytes: int,
+    *,
+    rows: int,
+    seed: int,
+    warmup: int,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     shards = [
         json.loads(rank_output_path(output, rank).read_text())
@@ -984,9 +1186,11 @@ def aggregate_rank_results(
         aggregate_samples = []
         for sample_index in range(sample_count):
             rank_samples = [row["samples"][sample_index] for row in rank_rows]
-            slowest_rank_sample = max(
-                rank_samples, key=lambda sample: sample["latency_ms"]
+            slowest_rank = max(
+                range(world_size),
+                key=lambda rank: rank_samples[rank]["latency_ms"],
             )
+            slowest_rank_sample = rank_samples[slowest_rank]
             device_reads = [
                 sample["device_read_bytes"]
                 for sample in rank_samples
@@ -998,10 +1202,25 @@ def aggregate_rank_results(
             trace_summary = aggregate_trace_overlap_metrics(
                 rank_samples, key[5], world_size
             )
+            node_trace_summary = node_overlap_trace_metrics(
+                rows,
+                key[6],
+                seed,
+                world_size,
+                key[5],
+                warmup + sample_index,
+                key[2],
+            )
+            rank_phase_summary = aggregate_rank_phase_metrics(rank_samples)
             sample = {
                 "sample": sample_index,
                 "latency_ms": max(sample["latency_ms"] for sample in rank_samples),
                 "rank_latencies_ms": [sample["latency_ms"] for sample in rank_samples],
+                "slowest_rank": slowest_rank,
+                "slowest_rank_has_storage": bool(
+                    slowest_rank_sample["phase_metrics"]["storage_requested_rows"]
+                    > 0
+                ),
                 "process_read_bytes": process_read_bytes,
                 "device_read_bytes": max(device_reads) if device_reads else None,
                 "measured_read_bytes": max(device_reads)
@@ -1029,6 +1248,8 @@ def aggregate_rank_results(
                 "rank_phase_metrics": [
                     sample["phase_metrics"] for sample in rank_samples
                 ],
+                **node_trace_summary,
+                **rank_phase_summary,
                 **{
                     field: slowest_rank_sample["phase_metrics"][field]
                     for field in (*PHASE_TIMING_FIELDS, *PHASE_COUNT_FIELDS)
@@ -1172,6 +1393,30 @@ def aggregate_rank_results(
                 if aggregate_samples[0]["estimated_tiles_touched"] is not None
                 else None
             ),
+            "node_contiguous_ranges_mean": (
+                statistics.mean(
+                    sample["node_contiguous_ranges"]
+                    for sample in aggregate_samples
+                )
+                if aggregate_samples[0]["node_contiguous_ranges"] is not None
+                else None
+            ),
+            "node_estimated_tiles_touched_mean": (
+                statistics.mean(
+                    sample["node_estimated_tiles_touched"]
+                    for sample in aggregate_samples
+                )
+                if aggregate_samples[0]["node_estimated_tiles_touched"] is not None
+                else None
+            ),
+            "clustered_run_count": aggregate_samples[0]["clustered_run_count"],
+            "slowest_rank_storage_fraction": statistics.mean(
+                float(sample["slowest_rank_has_storage"])
+                for sample in aggregate_samples
+            ),
+            "storage_owner_count_mean": statistics.mean(
+                sample["storage_owner_count"] for sample in aggregate_samples
+            ),
             "cuda_peak_temporary_bytes": max(
                 sample["cuda_peak_temporary_bytes"] for sample in aggregate_samples
             ),
@@ -1193,10 +1438,40 @@ def aggregate_rank_results(
             result[f"{field[:-3]}_mean_ms"] = statistics.mean(
                 sample[field] for sample in aggregate_samples
             )
+            label = field.removesuffix("_ms")
+            for metric in (
+                "rank_max_ms",
+                "rank_mean_ms",
+                "storage_owner_max_ms",
+                "storage_owner_mean_ms",
+            ):
+                values = [
+                    sample[f"{label}_{metric}"]
+                    for sample in aggregate_samples
+                    if sample[f"{label}_{metric}"] is not None
+                ]
+                result[f"{label}_{metric.removesuffix('_ms')}_mean_ms"] = (
+                    statistics.mean(values) if values else None
+                )
         for field in PHASE_COUNT_FIELDS[:4]:
             result[f"{field}_mean"] = statistics.mean(
                 sample[field] for sample in aggregate_samples
             )
+        for field in PHASE_COUNT_FIELDS:
+            for metric in (
+                "rank_max",
+                "rank_mean",
+                "storage_owner_max",
+                "storage_owner_mean",
+            ):
+                values = [
+                    sample[f"{field}_{metric}"]
+                    for sample in aggregate_samples
+                    if sample[f"{field}_{metric}"] is not None
+                ]
+                result[f"{field}_{metric}_mean"] = (
+                    statistics.mean(values) if values else None
+                )
         for field in TILEDB_STAT_TIMING_FIELDS:
             values = [
                 sample[field]
@@ -1305,6 +1580,8 @@ def system_metadata(
         "overlap_cases": args.overlap_cases,
         "overlap_placements": args.overlap_placements,
         "overlap_case_definitions": OVERLAP_CASES,
+        "paired_overlap_cases": sorted(PAIRED_OVERLAP_CASES),
+        "clustered_run_counts": list(CLUSTERED_RUN_COUNTS),
         "trace_file": str(args.trace_file) if args.trace_file is not None else None,
         "consolidated": args.consolidate,
         "tiledb_compute_concurrency": os.getenv(
@@ -1317,6 +1594,15 @@ def system_metadata(
         "cuda_baseline": "WholeMemory distributed/cuda",
         "cold_cache_method": "POSIX_FADV_DONTNEED before each sample; rank 0 evicts node-shared arrays",
         "aggregate_latency": "maximum rank latency per synchronized sample",
+        "aggregate_phase_metrics": (
+            "legacy phase columns come from the slowest end-to-end rank; "
+            "rank_max, rank_mean, and storage_owner columns are also recorded"
+        ),
+        "overlap_trace_identity": (
+            "node_unique_id_sha256 records the exact sorted node-wide unique ID set; "
+            "cross_rank_25 and within_rank_25 share a digest for a given placement, "
+            "batch, and sample"
+        ),
         "storage_counter": "block-device sectors when available, otherwise summed process read_bytes",
     }
 
@@ -1506,7 +1792,12 @@ def main() -> None:
     )
     multiprocess_run(args.world_size, worker, inline_single_process=True)
     results, samples, rank_metadata = aggregate_rank_results(
-        args.output, args.world_size, args.width * np.dtype(np.float32).itemsize
+        args.output,
+        args.world_size,
+        args.width * np.dtype(np.float32).itemsize,
+        rows=args.rows,
+        seed=args.seed,
+        warmup=args.warmup,
     )
     write_results(
         args.output,

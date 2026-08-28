@@ -1,4 +1,4 @@
-# RTX PRO 6000 TabICLv2-oriented TileDB overlap benchmark runbook
+# RTX PRO 6000 paired-overlap and multi-run TileDB benchmark runbook
 
 This is the operational handoff for running the single-node loading benchmark on host
 `4u8g-tur-0037`. The benchmark definition and metric semantics are in
@@ -18,7 +18,10 @@ the results.
 - Preserve the checked-in matrix after the smoke test. Record any necessary deviation before
   changing it.
 
-The overlap matrix uses one 128 GiB raw width-2,048 dataset and one node-shared TileDB copy. When
+This follow-up corrects the scattered 25%-unique topology pair so both cases use the exact same
+node-wide unique ID set, records rank-aware phase aggregates, and adds 10-, 40-, and 100-run
+clustered contexts distributed across WholeMemory owner partitions. The overlap matrix uses one
+128 GiB raw width-2,048 dataset and one node-shared TileDB copy. When
 created from scratch, reserve at least 320 GiB for data, metadata, and results. Reuse the prior
 matching data directory when available. Width 2,048 also creates a 128 GiB pinned-CPU tensor, so
 require at least 160 GiB of available system memory; 256 GiB or more is preferred. The optional
@@ -150,8 +153,8 @@ All ranks must return exact values for both rank-local and node-shared arrays. I
 unbuilt source package, correct `PYTHONPATH` or run from a directory that exposes the installed
 wheel first; do not alter the test to bypass the compiled binding.
 
-Then run a small end-to-end smoke matrix that exercises both sources of 25% node-wide uniqueness
-and both ID placements:
+Then run a small end-to-end smoke matrix that exercises both sources of 25% node-wide uniqueness,
+the corrected scattered pair, and the 10- and 100-run clustered boundaries:
 
 ```bash
 env \
@@ -171,8 +174,8 @@ env \
   --query-chunk-rows 0 \
   --cache-modes cold,warm \
   --overlap-cases cross_rank_25,within_rank_25 \
-  --overlap-placements clustered,scattered \
-  --patterns overlap_clustered_cross_rank_25,overlap_clustered_within_rank_25,overlap_scattered_cross_rank_25,overlap_scattered_within_rank_25 \
+  --overlap-placements clustered,scattered,clustered_runs_10,clustered_runs_100 \
+  --patterns overlap_clustered_cross_rank_25,overlap_clustered_within_rank_25,overlap_scattered_cross_rank_25,overlap_scattered_within_rank_25,overlap_clustered_runs_10_cross_rank_25,overlap_clustered_runs_10_within_rank_25,overlap_clustered_runs_100_cross_rank_25,overlap_clustered_runs_100_within_rank_25 \
   --batch-sizes 1000 \
   --block-device /dev/nvme1n1 \
   --warmup 1 \
@@ -183,7 +186,7 @@ env \
 Before the full run, confirm that:
 
 - the smoke JSON, both CSVs, and four rank checkpoints exist and are nonempty;
-- 12 aggregate configurations and 24 measured samples are present;
+- 24 aggregate configurations and 48 measured samples are present;
 - CPU and node-shared TileDB rows are present;
 - all latencies are finite and positive;
 - TileDB phase metrics have `valid=true` in the rank checkpoints;
@@ -193,6 +196,13 @@ Before the full run, confirm that:
   requesting ranks per unique row;
 - `within_rank_25` reports within-rank and node-wide uniqueness 25%, 4x within-rank repetition,
   and one requesting rank per unique row;
+- for a fixed placement and sample, `cross_rank_25` and `within_rank_25` have identical
+  `node_unique_id_sha256`, `node_contiguous_ranges`, and `node_estimated_tiles_touched`;
+- `clustered_runs_10` and `clustered_runs_100` report exactly 10 and 100
+  `node_contiguous_ranges`, respectively, and owner max/mean unique-row imbalance no greater than
+  1.01;
+- every sample records `slowest_rank`, `slowest_rank_has_storage`, `storage_owner_ranks`, and the
+  rank max, rank mean, max-rank identity, storage-owner max, and storage-owner mean for every phase;
 - cold TileDB samples report physical reads from `/dev/nvme1n1`;
 - recorded CPU affinities are contained in NUMA node 1; and
 - recorded `CUDA_VISIBLE_DEVICES` is `4,5,6,7`.
@@ -222,10 +232,13 @@ python/pylibwholegraph/benchmarks/run_tiledb_tabicl_overlap_benchmark.sh \
 The default focused run contains:
 
 - 42 clustered configurations: seven overlap topologies at 48,000 and 100,000 requests per rank;
-- 6 scattered configurations: the paired 25%-unique topologies at 100,000 requests per rank;
+- 6 scattered configurations: the corrected paired 25%-unique topologies at 100,000 requests per
+  rank, using an identical node-wide unique ID set for both topologies;
+- 18 multi-run configurations: the paired 25%-unique topologies at 100,000 requests per rank with
+  the same unique IDs arranged into 10, 40, or 100 non-overlapping runs across owner partitions;
 - 6 continuity configurations: the preceding 256- and 4,096-row windows at 65,536 requests per
   rank;
-- 54 aggregate configurations, 270 measured samples, and 378 synchronized rounds including
+- 72 aggregate configurations, 360 measured samples, and 504 synchronized rounds including
   warmups.
 
 Every case uses width 2,048, a 256-row tile extent, one node-shared array, two warmups, and five
@@ -237,9 +250,24 @@ must show GPU sort/deduplication, compact D2H/H2D, and GPU expansion.
 The two 25%-unique cases are the primary diagnostic pair. `cross_rank_25` has no duplicates within
 a rank but sends the same unique set from all four ranks. `within_rank_25` repeats each row four
 times within one rank but gives each rank a disjoint unique set. Their node-wide unique fractions
-are identical; differences expose routing, fan-out, owner balance, NCCL exchange, and expansion
-costs that a flat unique-percentage sweep would hide. `stress_1` is a non-representative lower bound,
-not an expected TabICLv2 workload.
+are identical. In the scattered and multi-run outputs, their exact sorted node-wide ID set must
+also have the same `node_unique_id_sha256` for each synchronized sample. This holds physical
+placement fixed so differences isolate routing, fan-out, NCCL exchange, and expansion rather than
+different TileDB tile footprints. `stress_1` is a non-representative lower bound, not an expected
+TabICLv2 workload.
+
+The multi-run placements model a context assembled from multiple contiguous groups without yet
+claiming to reproduce a TabICLv2 application trace. Runs are non-overlapping, distributed across
+the four WholeMemory owner partitions, and balanced by unique-row count. Ten runs represent a
+strongly grouped context, 100 runs a more fragmented context, and 40 runs an intermediate point.
+Each sample records the exact node-wide range count, tile count, and unique-ID digest.
+
+Legacy aggregate phase columns remain available for compatibility and still describe the slowest
+end-to-end rank. They are not sufficient when that rank is a waiting non-owner. Each raw sample now
+also records, for every timing and count field, the rank maximum, rank mean, rank that supplied the
+maximum, storage-owner maximum, and storage-owner mean. Aggregate CSV rows contain the mean of
+each of those rank-aware sample metrics. These components may overlap on different ranks and must
+not be added to reconstruct end-to-end latency.
 
 ## 6. Optional complete matrix
 
@@ -291,10 +319,23 @@ array metadata is inconsistent.
 ## 7. Validate and preserve the results
 
 The focused result directory should contain `tabicl-overlap-clustered-width-2048`,
-`tabicl-overlap-scattered-width-2048`, and `tabicl-continuity-width-2048` result sets. Each has an
-aggregate JSON/CSV, raw-sample CSV, and four rank checkpoints. Check for 42 aggregate cases and 210
-measured samples in the clustered result, 6 cases and 30 samples in the scattered result, and 6
-cases and 30 samples in the continuity result.
+`tabicl-overlap-scattered-width-2048`, `tabicl-overlap-multirun-width-2048`, and
+`tabicl-continuity-width-2048` result sets. Each has an aggregate JSON/CSV, raw-sample CSV, and four
+rank checkpoints. Check for 42 aggregate cases and 210 measured samples in the clustered result, 6
+cases and 30 samples in the scattered result, 18 cases and 90 samples in the multi-run result, and
+6 cases and 30 samples in the continuity result.
+
+Run the checked-in validator before interpreting or archiving the results:
+
+```bash
+python3 python/pylibwholegraph/benchmarks/validate_tiledb_tabicl_overlap_results.py \
+  "${result_dir}/tabicl-overlap" \
+  | tee "${result_dir}/tabicl-overlap-validation.txt"
+```
+
+It must report `PASS: 72 aggregate configurations, 360 measured samples`. It also verifies exact
+topology-pair fingerprints and physical placement, multi-run range counts and owner balance,
+finite positive latency, and the presence of every rank-aware phase field.
 
 Verify the exact overlap invariants in every aggregate and raw sample:
 
@@ -314,6 +355,17 @@ CPU sort, CPU deduplication, and CPU reorder as zero. `index_bytes`, `raw_stagin
 `output_bytes` must scale with `storage_unique_rows`, not `storage_requested_rows`. Preserve every
 stage timing, even if a short GPU phase rounds to zero milliseconds. Compare cold context
 construction separately from warm/cache-resident retrieval; do not average the cache modes.
+
+For every scattered and multi-run sample, pair rows by backend, layout, tile extent, cache mode,
+batch size, placement, and sample index. The `cross_rank_25` and `within_rank_25` rows must have the
+same `node_unique_id_sha256`, `node_contiguous_ranges`, and `node_estimated_tiles_touched`. Do not
+accept a topology comparison when any of those fields differs. For multi-run samples,
+`node_contiguous_ranges` must equal 10, 40, or 100 as named by `overlap_placement`, and
+`owner_unique_max_to_mean` must be at most 1.01.
+
+Use `*_rank_max_*` and `*_storage_owner_*` fields for phase diagnosis. The legacy unqualified phase
+field may legitimately be zero when `slowest_rank_has_storage=false`; that is a waiting-rank
+measurement, not evidence that no TileDB query ran. Do not sum rank maxima from different phases.
 
 The full result directory should contain, for each width:
 

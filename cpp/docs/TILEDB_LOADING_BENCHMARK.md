@@ -1,7 +1,10 @@
 # Single-node TileDB loading benchmark
 
-This benchmark compares read-only TileDB-backed WholeMemory with distributed host-pinned
-(`cpu`) WholeMemory. It deliberately contains no training, sampling, or second communicator. Four
+This benchmark measures read-only TileDB-backed WholeMemory against distributed host-pinned
+(`cpu`) WholeMemory as the in-memory speed-of-light reference. The goal is to minimize the
+out-of-core latency premium while enabling feature tables that cannot coexist in memory with large
+models, not to require TileDB to outperform an all-resident table. It deliberately contains no
+training, sampling, or second communicator. Four
 processes use one NCCL/WholeMemory communicator and visible GPUs 4-7. The launch script binds the
 processes and their memory allocations to CPU socket/NUMA node 1, which is local to the GPUs and
 `/dev/nvme1n1` on the RTX PRO 6000 test node.
@@ -26,11 +29,12 @@ python/pylibwholegraph/benchmarks/run_tiledb_tabicl_overlap_benchmark.sh \
 ```
 
 It fixes width 2,048, a 256-row tile extent, one node-shared array, request sizes 48,000 and
-100,000 per rank, and the pinned-CPU comparison. Seven exact clustered overlap cases separate
-within-rank repetition from cross-rank sharing. A scattered 100,000-row sentinel compares the two
-ways to obtain 25% node-wide uniqueness, and the preceding 65,536-row window cases are retained
-only as a continuity check. The run contains 54 configurations, 270 measured samples, and 378
-synchronized rounds including warmups.
+100,000 per rank, and the pinned-CPU reference. Seven exact clustered overlap cases separate
+within-rank repetition from cross-rank sharing. A corrected scattered 100,000-row sentinel compares
+the two ways to obtain 25% node-wide uniqueness using the same physical unique-ID set. Additional
+10-, 40-, and 100-run clustered pairs distribute those same 25%-unique contexts across owner
+partitions. The preceding 65,536-row window cases are retained only as a continuity check. The run
+contains 72 configurations, 360 measured samples, and 504 synchronized rounds including warmups.
 
 The overlap cases are generated from distinct unique IDs before deliberate repetition is added:
 
@@ -44,15 +48,26 @@ The overlap cases are generated from distinct unique IDs before deliberate repet
 | `combined_3_125` | 8x | all four ranks | 3.125% |
 | `stress_1` | 25x | all four ranks | 1% |
 
-`clustered` places each unique rank set in a contiguous span; `scattered` applies a deterministic
-bijection across the global row space. These are controlled storage diagnostics, not claims about
-the final TabICLv2 distribution. In particular, the runner does not yet model time-series ordering
-or grouped-contiguous context sampling; those choices are deferred until an end-to-end trace is
-available.
+`clustered` places the node-wide unique set in one contiguous span; `scattered` applies a
+deterministic bijection across the global row space. `clustered_runs_10`, `clustered_runs_40`, and
+`clustered_runs_100` create that number of non-overlapping contiguous runs, distribute them across
+WholeMemory owner partitions, and balance unique-row ownership. For each placement and sample,
+`cross_rank_25` and `within_rank_25` derive from the identical node-wide unique IDs; only assignment
+and repetition across ranks changes. These are controlled storage diagnostics, not claims about
+the final TabICLv2 distribution. Time-series ordering and application-derived grouped contexts are
+still deferred until an end-to-end trace is available.
 
 The aggregate and sample outputs add within-rank and node-wide unique fractions, mean repetition,
-requesting ranks per unique row, and owner-rank max/mean imbalance. Existing range, tile, planning,
-read, H2D, GPU expansion, NCCL, and output-reorder measurements remain unchanged.
+requesting ranks per unique row, owner-rank max/mean imbalance, the exact node-wide unique-ID SHA-256
+digest, node-wide range count, and node-wide tile count. The digest and physical counts must match
+between paired topologies. Existing range, tile, planning, read, H2D, GPU expansion, NCCL, and
+output-reorder measurements remain unchanged.
+
+The unqualified phase columns remain the slowest end-to-end rank for backward compatibility. Raw
+samples additionally record the rank maximum, rank mean, max-rank identity, storage-owner maximum,
+and storage-owner mean for every phase timing and count. Aggregate rows report the mean of those
+rank-aware sample values. Use the rank-aware fields for diagnosis because the slowest rank may be a
+waiting non-owner with no storage work.
 
 The preceding GPU-compaction validation can still be reproduced with:
 
