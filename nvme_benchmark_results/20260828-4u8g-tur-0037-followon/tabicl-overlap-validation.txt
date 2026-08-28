@@ -1,0 +1,1 @@
+PASS: 72 aggregate configurations, 360 measured samples, paired traces and rank-aware phases valid

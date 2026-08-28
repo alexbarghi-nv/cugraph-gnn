@@ -12,7 +12,12 @@ matrix) on GPUs 4-7 / NUMA node 1.
 Updated: 2026-08-28 with the full TabICLv2-oriented overlap benchmark runbook
 (`TILEDB_LOADING_BENCHMARK_RUNBOOK.md`), steps 1-6: environment/build, correctness, smoke, the
 focused overlap matrix, and the optional complete legacy matrix (widths 128/512/2,048), all on
-GPUs 4-7 / NUMA node 1. Commit/push of the result handoff is deferred pending review.
+GPUs 4-7 / NUMA node 1.
+
+Updated: 2026-08-28 with the follow-on paired-overlap and multi-run runbook update (commit
+`2885b66`): the corrected scattered 25%-unique pair (identical node-wide unique ID set) and the new
+10/40/100-run clustered multi-run cases, on GPUs 4-7 / NUMA node 1. The unchanged optional complete
+matrix was not re-run.
 
 ## Executive summary
 
@@ -634,6 +639,76 @@ unaffected.
 7. `print_env.sh` is not marked executable in this checkout (`-rw-r--r--`); ran it as
    `bash print_env.sh` instead of `./print_env.sh`.
 
+## Follow-on paired-overlap and multi-run benchmark (2026-08-28)
+
+- Host: `4u8g-tur-0037`. Branch commit: `2885b66a1e7181072caac6458b69f55030afbad5`
+  (`prototype/tiledb-backend`, "Add paired overlap and multi-run TileDB benchmarks").
+- No rebuild was needed: the update only touched documentation and Python benchmark/validator
+  scripts, not `cpp/` sources.
+- Data dir: `/raid/abarghi/wholememory-tiledb-tabicl-20260828T191645Z` (smoke only).
+- Result dir: `/raid/abarghi/wholememory-tiledb-tabicl-results-20260828T191645Z`.
+- Reused full data dir: `/raid/abarghi/wholememory-tiledb-loading-20260827T194011Z/full` (same
+  dataset as the 2026-08-28 TabICLv2 overlap run above; feature values and TileDB schema are
+  unchanged by this update).
+- Scope: steps 1-5 plus the checked-in validator only. Step 6 (optional complete matrix) was not
+  re-run — nothing in that step changed, it already passed on 2026-08-28 above, and the runbook
+  says to only repeat it when a focused result reveals a regression. Confirmed with the requester
+  before proceeding.
+
+### Pass/fail status and elapsed time
+
+| Step | Status | UTC window | Elapsed |
+|---|---|---|---:|
+| Correctness regression (`TEST_WM_TILEDB_WORLD_SIZE=4`) | PASS: 1/1 | 19:17:25-19:17:31 | ~6 s |
+| Smoke matrix (corrected scattered pair + 10/100-run cases) | PASS (automated checks) | 19:17:31-19:17:38 | ~7 s |
+| Focused overlap matrix (clustered/scattered/multi-run/continuity) | PASS | 19:17:38-20:23:44 | ~1 h 6 m 6 s |
+| Checked-in validator | PASS | 20:23:44-20:23:45 | ~1 s |
+| **Total** | | 19:17:25-20:23:45 | **~1 h 6 m 20 s** |
+
+### Aggregate case/sample counts
+
+| Result set | Aggregate cases | Samples | Expected |
+|---|---:|---:|---|
+| Smoke (`tabicl-overlap-smoke`) | 24 | 48 | 24/48 |
+| Focused clustered (`tabicl-overlap-clustered-width-2048`) | 42 | 210 | 42/210 |
+| Focused scattered (`tabicl-overlap-scattered-width-2048`) | 6 | 30 | 6/30 |
+| Focused multi-run (`tabicl-overlap-multirun-width-2048`) | 18 | 90 | 18/90 |
+| Focused continuity (`tabicl-continuity-width-2048`) | 6 | 30 | 6/30 |
+| **Focused matrix total** | **72** | **360** | 72/360 |
+
+The checked-in validator (`validate_tiledb_tabicl_overlap_results.py`) reported:
+
+```text
+PASS: 72 aggregate configurations, 360 measured samples, paired traces and rank-aware phases valid
+```
+
+### Invariant and affinity checks
+
+The seven clustered overlap cases again matched the runbook's invariant table exactly
+(`independent` 100/100/1x/1 through `stress_1` 4/1/25x/4 — identical to the 2026-08-28 TabICLv2
+run above; the underlying dataset and topology generator for this case set are unchanged).
+
+The validator's own "paired traces ... valid" check covers the new pairing requirement: for every
+scattered and multi-run sample, `cross_rank_25` and `within_rank_25` must share
+`node_unique_id_sha256`, `node_contiguous_ranges`, and `node_estimated_tiles_touched`, and each
+multi-run placement's `node_contiguous_ranges` must equal 10/40/100 with
+`owner_unique_max_to_mean <= 1.01`. A manual spot check of the multi-run samples independently
+confirmed the range-count and owner-balance invariants (0 violations across all 90 samples).
+
+Across all five result sets (smoke + 4 focused): 0 CPU-backend `gpu_sort_mean_ms`/
+`gpu_deduplicate_mean_ms` violations, 0 nonfinite/non-positive latency values, and all 32 cold
+TileDB aggregate rows reported nonzero `storage_read_gib`. All 20 rank checkpoints reported
+`cpu_affinity` entirely within NUMA node 1 (cores 64-127, 192-255).
+
+Disk headroom on `/raid` held at 298 GiB free throughout (unchanged from the end of the prior run,
+since only the small smoke dataset was newly provisioned).
+
+### Deviations from the runbook
+
+Same as the 2026-08-28 TabICLv2 overlap run above (`git fetch fork`/`micromamba info --base`
+substitutions, `LD_LIBRARY_PATH`, `pytest --import-mode=append`, `print_env.sh` permissions);
+applied proactively this time since they were already known. No new deviations were required.
+
 ## Additional findings
 
 ### Partition-list API mismatch
@@ -685,7 +760,11 @@ communication.
    run alone.
 7. [x] Run the focused TabICLv2-oriented overlap matrix (independent/cross-rank/within-rank/combined
    overlap topologies, scattered placement, and locality-window continuity sentinels) described in
-   `TILEDB_LOADING_BENCHMARK_RUNBOOK.md`. All invariants matched expectations; see above.
+   `TILEDB_LOADING_BENCHMARK_RUNBOOK.md`. All invariants matched expectations; see above. Follow-on
+   (2026-08-28): the scattered pair now shares an identical node-wide unique ID set between its two
+   topologies, and 10/40/100-run clustered multi-run cases were added; all 72/72 cases and 360/360
+   samples passed, including the checked-in validator's paired-fingerprint and multi-run
+   range/balance checks.
 8. [ ] Develop and run the end-to-end TabICLv2 fine-tuning trace-based benchmark (with real
    time-series ordering and grouped-contiguous random contexts) as a separate effort — the overlap
    matrix above deliberately does not yet model those application-specific access patterns.
@@ -712,4 +791,5 @@ communication.
 | Four-rank focused GPU-compaction matrix | PASS: 349/349 samples, no regressions |
 | Focused TabICLv2-oriented overlap matrix (2026-08-28) | PASS: 54/54 cases, 270/270 samples |
 | Optional complete matrix, widths 128/512/2,048 (2026-08-28) | PASS: 468/468 cases, 4,680/4,680 samples |
+| Follow-on paired-overlap + multi-run matrix (2026-08-28) | PASS: 72/72 cases, 360/360 samples |
 | Four-rank complete loading matrix (all widths, 10 reps) | NOT YET RUN |
