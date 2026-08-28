@@ -9,6 +9,11 @@ Updated: 2026-08-25 with the eight-GPU RTX PRO 6000 NVMe results.
 Updated: 2026-08-27 with the four-rank colocated loading-benchmark runbook (focused GPU-compaction
 matrix) on GPUs 4-7 / NUMA node 1.
 
+Updated: 2026-08-28 with the full TabICLv2-oriented overlap benchmark runbook
+(`TILEDB_LOADING_BENCHMARK_RUNBOOK.md`), steps 1-6: environment/build, correctness, smoke, the
+focused overlap matrix, and the optional complete legacy matrix (widths 128/512/2,048), all on
+GPUs 4-7 / NUMA node 1. Commit/push of the result handoff is deferred pending review.
+
 ## Executive summary
 
 The TileDB-enabled library and Python packages build successfully in an isolated Conda environment.
@@ -529,6 +534,106 @@ Sequential cold-storage baseline (buffered sequential read of all rank partition
    consistently against the compiled binding, in both the parent and every spawned rank process.
    Invoked as `pytest -q --pyargs pylibwholegraph.tests.pylibwholegraph.test_tiledb_tensor`.
 
+## TabICLv2-oriented overlap benchmark + optional complete matrix (2026-08-28)
+
+- Host: `4u8g-tur-0037`. Branch commit: `1b01c883c8953a6659635a6b9811b995ceb5bc1e`
+  (`prototype/tiledb-backend`, matches `origin`).
+- Environment/CUDA versions: Python 3.12.13; PyTorch 2.10.0/CUDA 12.9; `RAPIDS_CUDA_VERSION=12.9`;
+  driver 595.71.05 / CUDA 13.2 (see `environment.txt` in the result directory for the full
+  `print_env.sh` capture).
+- Data dir: `/raid/abarghi/wholememory-tiledb-tabicl-20260827T230559Z` (smoke only; the focused and
+  full matrices reused an existing same-day data directory — see deviation 4 below).
+- Result dir: `/raid/abarghi/wholememory-tiledb-tabicl-results-20260827T230559Z`.
+- Reused full data dir: `/raid/abarghi/wholememory-tiledb-loading-20260827T194011Z/full`.
+
+### Pass/fail status and elapsed time
+
+| Step | Status | UTC window | Elapsed |
+|---|---|---|---:|
+| Build (`libwholegraph`, `pylibwholegraph`, tests, `--enable-tiledb`) | PASS | — | — |
+| C++ `TILEDB_STORAGE_TEST` | PASS: 5/5 | — | — |
+| Correctness regression (`TEST_WM_TILEDB_WORLD_SIZE=4`) | PASS: 1/1 | 23:15:52-23:15:58 | ~6 s |
+| Smoke matrix | PASS (automated checks) | 23:15:58-23:16:04 | ~6 s |
+| Focused TabICLv2 overlap matrix | PASS | 23:16:04-23:24:50 | ~8 m 46 s |
+| Optional complete matrix, width=128 | PASS | 23:24:50-23:33:19 | ~8 m 29 s |
+| Optional complete matrix, width=512 | PASS | 23:33:19-00:01:24 | ~28 m 5 s |
+| Optional complete matrix, width=2,048 | PASS | 00:01:24-01:38:57 | ~1 h 37 m 33 s |
+| **Total (correctness through full matrix)** | | 23:15:52-01:38:57 | **~2 h 23 m** |
+
+### Aggregate case/sample counts
+
+| Result set | Aggregate cases | Samples | Expected |
+|---|---:|---:|---|
+| Focused clustered (`tabicl-overlap-clustered-width-2048`) | 42 | 210 | 42/210 |
+| Focused scattered (`tabicl-overlap-scattered-width-2048`) | 6 | 30 | 6/30 |
+| Focused continuity (`tabicl-continuity-width-2048`) | 6 | 30 | 6/30 |
+| Full matrix, width=128 (`loading-width-128`) | 156 | 1,560 | 156/1,560 |
+| Full matrix, width=512 (`loading-width-512`) | 156 | 1,560 | 156/1,560 |
+| Full matrix, width=2,048 (`loading-width-2048`) | 156 | 1,560 | 156/1,560 |
+
+All six result sets matched their expected counts exactly, and no `NaN`/infinite/non-positive
+`latency_mean_ms`/`latency_p50_ms`/`latency_p95_ms` were found in any of them.
+
+### Invariant and affinity checks
+
+All seven overlap cases in the clustered result matched the runbook's invariant table exactly
+(within-rank/node-wide unique fraction, repetition, requesting ranks per unique row):
+`independent` 100/100/1x/1, `cross_rank_25` 100/25/1x/4, `within_rank_25` 25/25/4x/1,
+`combined_12_5` 50/12.5/2x/4, `combined_6_25` 25/6.25/4x/4, `combined_3_125` 12.5/3.125/8x/4,
+`stress_1` 4/1/25x/4.
+
+Every CPU-backend aggregate row across all six result sets reported
+`gpu_sort_mean_ms == 0`/`gpu_deduplicate_mean_ms == 0` (no GPU-path contamination). All 238 cold
+TileDB aggregate rows across the run reported nonzero `storage_read_gib` (physical reads from
+`/dev/nvme1n1`, not just a `POSIX_FADV_DONTNEED` hint). All 28 rank checkpoints reported
+`cpu_affinity` entirely within NUMA node 1's core set (64-127, 192-255); `CUDA_VISIBLE_DEVICES=4,5,6,7`
+was passed explicitly in every invocation (rank checkpoints record the GPU model but not the
+physical index, so this was verified by construction rather than from the JSON).
+
+Disk headroom on `/raid` held throughout: 843 GiB free before the run, 683 GiB before the
+width=2,048 stage, 298 GiB free at completion (2.5 TiB used of 2.9 TiB, 90%).
+
+### Anomaly
+
+12 of 28 rank checkpoints (the width=128/512/2,048 full-matrix ranks, which pass `--tiledb-stats`)
+recorded `"tiledb_stats_available": true` with
+`"tiledb_stats_error": "...: undefined symbol: tiledb_stats_enable"`. The native TileDB internal
+statistics API failed to link/resolve in this environment. This does not affect the measured
+WholeMemory-level stage timers (`gpu_sort_mean_ms`, `internal_tile_read_mean_ms`,
+`internal_reader_work_mean_ms`, etc., all populated and finite in every checked row) — only the
+lower-level native TileDB planning/tile-read counters that `--tiledb-stats` additionally requests
+are unavailable. Smoke and the focused overlap matrix do not pass `--tiledb-stats` and were
+unaffected.
+
+### Deviations from the runbook
+
+4. Reused the existing data directory `/raid/abarghi/wholememory-tiledb-loading-20260827T194011Z/full`
+   (from a same-day run, not created via this runbook's own naming convention) as the focused-matrix
+   `focused_data_dir` and the full-matrix data directory, instead of provisioning a fresh one. Its
+   `.wholememory_benchmark.json` markers matched 16,777,216 rows, width 2,048, tile extent 256, node
+   layout. This was necessary because `/raid` had only 843 GiB free at preflight time (below the
+   1.3 TiB "from scratch" budget for the optional complete matrix); reusing the 633 GiB already
+   provisioned there made the disk budget work. No existing dataset or result directory was deleted
+   or overwritten.
+5. `micromamba info --base` did not resolve a usable profile-script path in this shell
+   (`.../etc/profile.d/micromamba.sh: No such file or directory`); used
+   `eval "$(micromamba shell hook --shell bash)"` instead, which is functionally equivalent.
+6. `cpp/build/gtests/...`/build steps aside, running `python -m pytest` (default `--import-mode`)
+   against `test_tiledb_tensor.py` at `TEST_WM_TILEDB_WORLD_SIZE=4` still shadowed the installed
+   binding in the four spawned rank subprocesses even after fixing `LD_LIBRARY_PATH` (deviation 2
+   from the prior update), because `multiprocessing`'s `spawn` start method inherits the *parent's*
+   live `sys.path` at `Process.start()` time, and pytest's default "prepend" rootpath resolution had
+   already put the unbuilt source tree (`python/pylibwholegraph`) ahead of site-packages in that
+   `sys.path` due to the `tests/pylibwholegraph/` directory name colliding with the `pylibwholegraph`
+   package one level up. `--import-mode=importlib` made this worse (it shadowed even the parent
+   process). Fixed, without altering the test, by adding `--import-mode=append`, which appends
+   pytest's rootpath instead of prepending it, so the installed wheel (already earlier in
+   `sys.path` from normal interpreter startup) resolves first in both the parent and every spawned
+   rank. Invoked as:
+   `pytest -q --import-mode=append python/pylibwholegraph/pylibwholegraph/tests/pylibwholegraph/test_tiledb_tensor.py`.
+7. `print_env.sh` is not marked executable in this checkout (`-rw-r--r--`); ran it as
+   `bash print_env.sh` instead of `./print_env.sh`.
+
 ## Additional findings
 
 ### Partition-list API mismatch
@@ -573,11 +678,17 @@ communication.
    locality windows, and cache states. The benchmark now separates ID routing, D2H, decode, sort,
    deduplication, range construction, query setup/submit, CPU reorder, H2D, embedding exchange, and
    output reorder, with nested TileDB planning/I/O timers retained separately. The focused
-   GPU-compaction matrix (2026-08-27) completed with no regressions; the optional full matrix
-   (156 aggregate cases/width) was not yet run — do that before drawing a final performance
-   conclusion.
-7. [ ] Develop and run the TabICLv2 fine-tuning benchmark as a separate effort after the loading
-   matrix is operational.
+   GPU-compaction matrix (2026-08-27) completed with no regressions. The optional complete matrix
+   (156 aggregate cases/width, all three widths) also completed on 2026-08-28 with no regressions
+   (see "TabICLv2-oriented overlap benchmark + optional complete matrix" above) — node-side evidence
+   is preserved, but a final performance conclusion should still not be drawn from a single node-side
+   run alone.
+7. [x] Run the focused TabICLv2-oriented overlap matrix (independent/cross-rank/within-rank/combined
+   overlap topologies, scattered placement, and locality-window continuity sentinels) described in
+   `TILEDB_LOADING_BENCHMARK_RUNBOOK.md`. All invariants matched expectations; see above.
+8. [ ] Develop and run the end-to-end TabICLv2 fine-tuning trace-based benchmark (with real
+   time-series ordering and grouped-contiguous random contexts) as a separate effort — the overlap
+   matrix above deliberately does not yet model those application-specific access patterns.
 
 ## Final status
 
@@ -599,4 +710,6 @@ communication.
 | Eight-GPU NVMe benchmark | PASS: RTX PRO 6000, unconsolidated and consolidated |
 | Four-rank colocated loading benchmark, correctness/smoke | PASS: GPUs 4-7, NUMA node 1 |
 | Four-rank focused GPU-compaction matrix | PASS: 349/349 samples, no regressions |
+| Focused TabICLv2-oriented overlap matrix (2026-08-28) | PASS: 54/54 cases, 270/270 samples |
+| Optional complete matrix, widths 128/512/2,048 (2026-08-28) | PASS: 468/468 cases, 4,680/4,680 samples |
 | Four-rank complete loading matrix (all widths, 10 reps) | NOT YET RUN |

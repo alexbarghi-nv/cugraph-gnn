@@ -1,0 +1,180 @@
+1b01c883c8953a6659635a6b9811b995ceb5bc1e
+4u8g-tur-0037
+2026-08-27T23:05:59+00:00
+GPU 0: NVIDIA RTX PRO 6000 Blackwell Server Edition (UUID: GPU-e212c706-4e9c-f681-36eb-1f39aee9dad4)
+GPU 1: NVIDIA RTX PRO 6000 Blackwell Server Edition (UUID: GPU-7427af1e-523a-92d5-ca2a-7072d624325a)
+GPU 2: NVIDIA RTX PRO 6000 Blackwell Server Edition (UUID: GPU-a905d1f2-7f0e-e82c-30a3-14345bf19a5d)
+GPU 3: NVIDIA RTX PRO 6000 Blackwell Server Edition (UUID: GPU-e7645272-fe1c-afb0-c380-086c96e2dbe6)
+GPU 4: NVIDIA RTX PRO 6000 Blackwell Server Edition (UUID: GPU-2f32abb7-4868-2bff-79c2-76db68cfc1cd)
+GPU 5: NVIDIA RTX PRO 6000 Blackwell Server Edition (UUID: GPU-279c25fa-6bf0-6a5a-d218-86e89ea5decc)
+GPU 6: NVIDIA RTX PRO 6000 Blackwell Server Edition (UUID: GPU-d029760c-0981-71c8-20a5-7dcb116c07ec)
+GPU 7: NVIDIA RTX PRO 6000 Blackwell Server Edition (UUID: GPU-2b99da0a-06a7-a1f2-d3a9-cd5ddef62876)
+	[4mGPU0	GPU1	GPU2	GPU3	GPU4	GPU5	GPU6	GPU7	NIC0	NIC1	CPU Affinity	NUMA Affinity	GPU NUMA ID[0m
+GPU0	 X 	NODE	NODE	NODE	SYS	SYS	SYS	SYS	NODE	NODE	0-63,128-191	0		N/A
+GPU1	NODE	 X 	NODE	NODE	SYS	SYS	SYS	SYS	NODE	NODE	0-63,128-191	0		N/A
+GPU2	NODE	NODE	 X 	NODE	SYS	SYS	SYS	SYS	NODE	NODE	0-63,128-191	0		N/A
+GPU3	NODE	NODE	NODE	 X 	SYS	SYS	SYS	SYS	NODE	NODE	0-63,128-191	0		N/A
+GPU4	SYS	SYS	SYS	SYS	 X 	NODE	NODE	NODE	SYS	SYS	64-127,192-255	1		N/A
+GPU5	SYS	SYS	SYS	SYS	NODE	 X 	NODE	NODE	SYS	SYS	64-127,192-255	1		N/A
+GPU6	SYS	SYS	SYS	SYS	NODE	NODE	 X 	NODE	SYS	SYS	64-127,192-255	1		N/A
+GPU7	SYS	SYS	SYS	SYS	NODE	NODE	NODE	 X 	SYS	SYS	64-127,192-255	1		N/A
+NIC0	NODE	NODE	NODE	NODE	SYS	SYS	SYS	SYS	 X 	PIX				
+NIC1	NODE	NODE	NODE	NODE	SYS	SYS	SYS	SYS	PIX	 X 				
+
+Legend:
+
+  X    = Self
+  SYS  = Connection traversing PCIe as well as the SMP interconnect between NUMA nodes (e.g., QPI/UPI)
+  NODE = Connection traversing PCIe as well as the interconnect between PCIe Host Bridges within a NUMA node
+  PHB  = Connection traversing PCIe as well as a PCIe Host Bridge (typically the CPU)
+  PXB  = Connection traversing multiple PCIe bridges (without traversing the PCIe Host Bridge)
+  PIX  = Connection traversing at most a single PCIe bridge
+  NV#  = Connection traversing a bonded set of # NVLinks
+
+NIC Legend:
+
+  NIC0: mlx5_0
+  NIC1: mlx5_1
+
+available: 2 nodes (0-1)
+node 0 cpus: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 128 129 130 131 132 133 134 135 136 137 138 139 140 141 142 143 144 145 146 147 148 149 150 151 152 153 154 155 156 157 158 159 160 161 162 163 164 165 166 167 168 169 170 171 172 173 174 175 176 177 178 179 180 181 182 183 184 185 186 187 188 189 190 191
+node 0 size: 1160566 MB
+node 0 free: 1015402 MB
+node 1 cpus: 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127 192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207 208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223 224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255
+node 1 size: 1161056 MB
+node 1 free: 25434 MB
+node distances:
+node   0   1 
+  0:  10  32 
+  1:  32  10 
+Architecture:                            x86_64
+CPU op-mode(s):                          32-bit, 64-bit
+Address sizes:                           52 bits physical, 57 bits virtual
+Byte Order:                              Little Endian
+CPU(s):                                  256
+On-line CPU(s) list:                     0-255
+Vendor ID:                               AuthenticAMD
+Model name:                              AMD EPYC 9555 64-Core Processor
+CPU family:                              26
+Model:                                   2
+Thread(s) per core:                      2
+Core(s) per socket:                      64
+Socket(s):                               2
+Stepping:                                1
+Frequency boost:                         enabled
+CPU(s) scaling MHz:                      56%
+CPU max MHz:                             4410.8110
+CPU min MHz:                             1210.8110
+BogoMIPS:                                6399.96
+Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl xtopology nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpuid_fault cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx_vnni avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd amd_ppin cppc arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq la57 rdpid bus_lock_detect movdiri movdir64b overflow_recov succor smca fsrm avx512_vp2intersect flush_l1d debug_swap amd_lbr_pmc_freeze
+Virtualization:                          AMD-V
+L1d cache:                               6 MiB (128 instances)
+L1i cache:                               4 MiB (128 instances)
+L2 cache:                                128 MiB (128 instances)
+L3 cache:                                512 MiB (16 instances)
+NUMA node(s):                            2
+NUMA node0 CPU(s):                       0-63,128-191
+NUMA node1 CPU(s):                       64-127,192-255
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Ghostwrite:                Not affected
+Vulnerability Indirect target selection: Not affected
+Vulnerability Itlb multihit:             Not affected
+Vulnerability L1tf:                      Not affected
+Vulnerability Mds:                       Not affected
+Vulnerability Meltdown:                  Not affected
+Vulnerability Mmio stale data:           Not affected
+Vulnerability Old microcode:             Not affected
+Vulnerability Reg file data sampling:    Not affected
+Vulnerability Retbleed:                  Not affected
+Vulnerability Spec rstack overflow:      Mitigation; Reduced Speculation
+Vulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl
+Vulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+Vulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; STIBP always-on; PBRSB-eIBRS Not affected; BHI Not affected
+Vulnerability Srbds:                     Not affected
+Vulnerability Tsa:                       Not affected
+Vulnerability Tsx async abort:           Not affected
+Vulnerability Vmscape:                   Mitigation; IBPB before exit to userspace
+NAME        TYPE   SIZE MODEL               SERIAL       FSTYPE   MOUNTPOINTS
+loop0       loop     4K                                  squashfs /snap/bare/5
+loop1       loop    74M                                  squashfs /snap/core22/2411
+loop2       loop    74M                                  squashfs /snap/core22/2437
+loop3       loop  66.8M                                  squashfs /snap/core24/1643
+loop5       loop 257.7M                                  squashfs /snap/firefox/8754
+loop6       loop  10.7M                                  squashfs /snap/firmware-updater/127
+loop7       loop  16.5M                                  squashfs /snap/firmware-updater/226
+loop8       loop 505.1M                                  squashfs /snap/gnome-42-2204/176
+loop9       loop 531.5M                                  squashfs /snap/gnome-42-2204/263
+loop10      loop 606.1M                                  squashfs /snap/gnome-46-2404/153
+loop11      loop 614.5M                                  squashfs /snap/gnome-46-2404/164
+loop12      loop  91.7M                                  squashfs /snap/gtk-common-themes/1535
+loop13      loop   395M                                  squashfs /snap/mesa-2404/1165
+loop14      loop   402M                                  squashfs /snap/mesa-2404/1839
+loop15      loop  10.3M                                  squashfs /snap/snap-store/1124
+loop16      loop  12.2M                                  squashfs /snap/snap-store/1216
+loop17      loop  50.1M                                  squashfs /snap/snapd/27591
+loop18      loop 260.3M                                  squashfs /snap/firefox/8763
+loop19      loop   476K                                  squashfs /snap/snapd-desktop-integration/157
+loop20      loop   828K                                  squashfs /snap/snapd-desktop-integration/391
+loop21      loop 210.8M                                  squashfs /snap/thunderbird/1170
+loop22      loop 219.9M                                  squashfs /snap/thunderbird/1201
+loop23      loop  50.1M                                  squashfs /snap/snapd/27710
+nvme1n1     disk   2.9T KIOXIA KCD81VUG3T20 Z5N0A09TTLTJ          
+└─nvme1n1p1 part   2.9T                                  ext4     /raid
+nvme0n1     disk   2.9T KIOXIA KCD81VUG3T20 Z5N0A09KTLTJ          
+├─nvme0n1p1 part   512M                                  vfat     /boot/efi
+├─nvme0n1p2 part   2.9T                                  ext4     /var/snap/firefox/common/host-hunspell
+│                                                                 /
+└─nvme0n1p3 part  64.3M                                  vfat     
+TARGET SOURCE         FSTYPE  SIZE  AVAIL OPTIONS
+/raid  /dev/nvme1n1p1 ext4    2.9T 842.3G rw,relatime,stripe=32
+1
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/nvme1n1p1  2.9T  1.9T  843G  70% /raid
+               total        used        free      shared  buff/cache   available
+Mem:           2.2Ti        33Gi       1.0Ti        16Mi       1.2Ti       2.2Ti
+Swap:             0B          0B          0B
+--- numastat -m ---
+
+Per-node system memory usage (in MBs):
+Token Unaccepted not in hash table.
+Token Unaccepted not in hash table.
+                          Node 0          Node 1           Total
+                 --------------- --------------- ---------------
+MemTotal              1160566.86      1161056.43      2321623.29
+MemFree               1015400.69        25434.54      1040835.23
+MemUsed                145166.17      1135621.89      1280788.07
+SwapCached                  0.00            0.00            0.00
+Active                   2278.39          374.61         2653.00
+Inactive               136295.24      1117699.30      1253994.54
+Active(anon)             1038.55          170.90         1209.46
+Inactive(anon)              0.00          248.61          248.61
+Active(file)             1239.84          203.70         1443.54
+Inactive(file)         136295.24      1117450.70      1253745.94
+Unevictable                 3.00            3.02            6.02
+Mlocked                     0.00            0.00            0.00
+Dirty                       8.20            0.32            8.53
+Writeback                   0.00            0.00            0.00
+FilePages              137540.97      1117664.64      1255205.61
+Mapped                    538.03          391.58          929.61
+AnonPages                1036.63          412.98         1449.61
+Shmem                       5.92           10.14           16.07
+KernelStack                60.93           43.79          104.72
+PageTables                 35.85           22.37           58.22
+SecPageTables              25.03          333.01          358.04
+NFS_Unstable                0.00            0.00            0.00
+Bounce                      0.00            0.00            0.00
+WritebackTmp                0.00            0.00            0.00
+Slab                     2044.86         1892.77         3937.62
+SReclaimable              977.97          576.04         1554.00
+SUnreclaim               1066.89         1316.73         2383.62
+AnonHugePages               0.00            0.00            0.00
+ShmemHugePages              0.00            0.00            0.00
+ShmemPmdMapped              0.00            0.00            0.00
+FileHugePages            1522.00           38.00         1560.00
+FilePmdMapped               0.00            2.00            2.00
+HugePages_Total             0.00            0.00            0.00
+HugePages_Free              0.00            0.00            0.00
+HugePages_Surp              0.00            0.00            0.00
+KReclaimable              977.97          576.04         1554.00
+--- deviation note ---
+Reusing prior full data dir /raid/abarghi/wholememory-tiledb-loading-20260827T194011Z/full (markers: rows=16777216 width=2048 tile_extent=256 node layout) instead of provisioning from scratch; only 843G free on /raid at preflight time.
