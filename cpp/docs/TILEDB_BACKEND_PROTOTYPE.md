@@ -1,0 +1,147 @@
+# Read-only TileDB backend prototype
+
+This branch adds an optional TileDB storage location for read-only feature gathers. It deliberately
+reuses WholeMemory's existing distributed partitioning and NCCL routing. Each communicator rank
+services the ids routed to its partition and the communicator returns gathered rows to requesting
+ranks. Storage can use either one local array per rank or one array shared by every rank on a node.
+
+## Build
+
+Install the TileDB C/C++ library so that its `TileDBConfig.cmake` is on `CMAKE_PREFIX_PATH`, then
+build with:
+
+```bash
+./build.sh libwholegraph pylibwholegraph cugraph-pyg --enable-tiledb
+```
+
+The default build remains unchanged and has no TileDB dependency. Calling the TileDB constructor in
+a build without support returns `WHOLEMEMORY_NOT_SUPPORTED`.
+
+## Array contracts
+
+Every rank's URI must identify a one-dimensional dense TileDB array with:
+
+- an `INT64` dimension named `row`, with a zero-based domain large enough for the local partition;
+- a fixed-sized `UINT8` attribute named `values`;
+- `values.cell_val_num == row_stride * sizeof(dtype)`.
+
+Rows in each local array are numbered from zero. WholeMemory continues to expose global row ids and
+subtracts the owning rank's partition offset before querying TileDB. The URI passed by each rank may
+be different. The Python convenience API replaces `{rank}` in a URI template with the global
+communicator rank.
+
+With `array_layout="node"`, every rank opens the same array. Its domain covers the complete logical
+tensor and uses global row coordinates, so WholeMemory does not subtract the owning-rank offset.
+This layout is currently restricted by convention to a single-node communicator; it is not the
+future multi-node storage topology.
+
+The build creates `wholememory_tiledb_ingest`, which converts one rank's contiguous row-major binary
+file into this schema:
+
+```bash
+wholememory_tiledb_ingest \
+  /mnt/nvme/features/rank_0.tdb rank_0.bin 10000000 512 4096 1048576 0
+```
+
+The arguments after the input file are row count, bytes per row, and optional TileDB tile extent in
+rows. The next optional argument is the number of rows written per query. The final `0` or `1`
+controls whether the resulting fragments are consolidated and vacuumed. Create one array for each
+rank using the same partitioning passed to WholeMemory. Tile extent and consolidation are workload
+parameters, not universal defaults: small extents reduce amplification for random gathers; larger
+extents improve sequential bandwidth and metadata efficiency.
+
+An eighth optional argument selects the starting row in the raw input file. This lets the benchmark
+ingest rank-local slices from one global row-major file without first duplicating each partition.
+
+## Python usage
+
+At the pylibwholegraph layer:
+
+```python
+features = pylibwholegraph.torch.create_wholememory_tensor_from_tiledb(
+    comm,
+    "/mnt/nvme/features/rank_{rank}.tdb",
+    sizes=[total_rows, feature_width],
+    dtype=torch.float32,
+    tensor_entry_partition=rows_per_rank,
+    array_layout="rank",  # or "node" for one global-coordinate array
+)
+result = features.gather(cuda_indices)
+```
+
+At the cuGraph-PyG layer, a TileDB tensor can be installed into `FeatureStore` by reference:
+
+```python
+features = DistTensor(
+    shape=(total_rows, feature_width),
+    dtype=torch.float32,
+    backend="tiledb",
+    tiledb_uri="/mnt/nvme/features/rank_{rank}.tdb",
+    partition_book=rows_per_rank,
+)
+feature_store.put_tensor(features, group_name="paper", attr_name="x")
+```
+
+## Buffer and execution path
+
+The gather pipeline is:
+
+1. bucket and exchange global ids on the existing CUDA stream;
+2. sort and deduplicate the owner-local ids on GPU while building an original-position-to-unique-row
+   mapping;
+3. copy only the sorted unique ids to a CUDA-pinned host buffer;
+4. coalesce adjacent unique ids into TileDB ranges and read each unique row once;
+5. asynchronously copy only the unique selected rows to GPU;
+6. use WholeMemory's CUDA gather kernel to expand duplicates and restore the owner send-buffer
+   order;
+7. use the existing NCCL all-to-all and final CUDA reorder to produce the normal CUDA output
+   tensor.
+
+Pinned host allocation is therefore supported and used. This prototype does **not** pass host
+pointers directly to NCCL: NCCL's documented user-buffer registration path describes CUDA/VMM or
+`ncclMemAlloc` device allocations, not a portable pinned-host send contract. The explicit staging
+copy is the compatibility baseline. It also means the first prototype does not reduce the peak
+device send-buffer size versus the CPU backend; it removes resident feature storage from host/device
+memory. A later optimization can chunk TileDB reads and communication to bound that staging buffer.
+The compact host buffers and unique-row device buffer scale with the unique id count. The existing
+full-size device send buffer remains because the first implementation expands rows before NCCL; a
+future deduplication-aware exchange could defer expansion to the requesting GPU and reduce NCCL
+traffic as well.
+
+## Intentional prototype limits
+
+- Read-only: scatter, optimizer updates, local tensor mapping, and file loading into an open handle
+  are rejected.
+- Distributed/NCCL handles only; hierarchy, VMM, NVSHMEM, and embedding-cache integration are out of
+  scope.
+- Gather output dtype must equal storage dtype. `force_dtype` conversion is not yet implemented.
+- Rank-local and communicator-shared arrays are supported. The shared layout is currently intended
+  only for a single-node communicator.
+- The TileDB query is synchronous with respect to the current CUDA stream. Overlap, prefetching,
+  persistent pinned pools, and overlapped I/O/copies are follow-up performance work. Experimental
+  bounded TileDB queries can be selected when creating a handle by setting
+  `WHOLEMEMORY_TILEDB_QUERY_CHUNK_ROWS`; zero or an unset variable preserves the unbounded default.
+- Array schema is checked through query success and returned byte count. Rich up-front schema
+  diagnostics can be added after the storage format stabilizes.
+
+## GPU verification and benchmark checklist
+
+Run the C++ TileDB storage tests first, then a one-rank gather, a multi-rank same-node gather, and a
+multi-node gather. Cover duplicate/unsorted ids, empty gathers, rank boundaries, 1-D tensors,
+subcolumn views, and invalid ids. Compare values against the CPU backend.
+
+For performance, report random and locality-biased batches across several batch sizes and tile
+extents. Capture application throughput, p50/p95 gather latency, NVMe bytes/read bandwidth, CPU
+utilization, TileDB internal stats, H2D bandwidth, peak pinned memory, and peak device staging
+memory. Compare with the pinned-CPU and internal NVMe implementations using identical partitions and
+id traces.
+
+`python/pylibwholegraph/benchmarks/tiledb_feature_fetch_benchmark.py` supports multiple local GPU
+ranks, raw sample retention, block-device counters, TileDB statistics, staging phase timings,
+recorded `.npy` ID traces, both array layouts, consolidated arrays, and query-chunk sweeps. Aggregate
+latency is the slowest rank in each synchronized sample; aggregate throughput counts requested
+bytes from all ranks. The phase metrics separately expose GPU sort, GPU deduplication/map creation,
+unique-id D2H, TileDB query work, optional compact CPU column-slice copying, unique-row H2D, GPU
+duplicate expansion, NCCL exchange, and final output reorder. Full-row gathers read TileDB directly
+into the compact pinned H2D buffer and therefore have no CPU reorder/copy stage. The
+focused colocated matrix and launcher are documented in [TILEDB_LOADING_BENCHMARK.md](TILEDB_LOADING_BENCHMARK.md).

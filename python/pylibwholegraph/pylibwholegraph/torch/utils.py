@@ -115,9 +115,11 @@ def str_to_wmb_wholememory_location(str_wmb_location: str):
         return wmb.WholeMemoryMemoryLocation.MlDevice
     elif str_wmb_location == "cpu":
         return wmb.WholeMemoryMemoryLocation.MlHost
+    elif str_wmb_location == "tiledb":
+        return wmb.WholeMemoryMemoryLocation.MlTileDB
     else:
         raise ValueError(
-            "WholeMemory location %s not supported, should be (cuda, cpu)"
+            "WholeMemory location %s not supported, should be (cuda, cpu, tiledb)"
             % (str_wmb_location,)
         )
 

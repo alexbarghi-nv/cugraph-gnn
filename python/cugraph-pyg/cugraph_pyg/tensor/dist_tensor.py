@@ -45,8 +45,9 @@ class DistTensor:
         entry count of rank i and should be a positive integer;
         the sum of partition_book should equal shape[0].
         Entries will be equally partitioned if None.
-    backend : Optional[Literal["vmm", "nccl", "nvshmem", "chunked"]] = "nccl"
+    backend : Optional[Literal["vmm", "nccl", "nvshmem", "chunked", "tiledb"]] = "nccl"
         The backend used for communication. Default is "nccl".
+        ``tiledb`` opens rank-local read-only storage and requires ``tiledb_uri``.
     """
 
     def __init__(
@@ -63,7 +64,8 @@ class DistTensor:
         **kwargs,
     ):
         self._tensor = None
-        self.__device = device
+        self.__device = "tiledb" if backend == "tiledb" else device
+        self.__backend = backend
         self.__partition_book = None if partition_book is None else list(partition_book)
         if src is None:
             # Create an empty WholeGraph tensor
@@ -269,6 +271,8 @@ class DistTensor:
             The requested node embeddings.
         """
         assert self._tensor is not None, "Please create WholeGraph tensor first."
+        if self.__backend == "tiledb":
+            raise TypeError("TileDB-backed DistTensor is read-only")
         idx = idx.cuda()
         if val.dtype != self.dtype:
             val = val.to(self.dtype)
@@ -304,6 +308,8 @@ class DistTensor:
         torch.Tensor
             The local tensor, converted from DLPack.
         """
+        if self.__backend == "tiledb":
+            raise TypeError("TileDB-backed DistTensor has no addressable local tensor")
         local_tensor, offset = self._tensor.get_local_tensor(host_view=host_view)
         return local_tensor
 
@@ -315,6 +321,8 @@ class DistTensor:
         int
             The local tensor's element offset.
         """
+        if self.__backend == "tiledb":
+            raise TypeError("TileDB-backed DistTensor has no addressable local tensor")
         _, offset = self._tensor.get_local_tensor()
         return offset
 

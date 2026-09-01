@@ -1,0 +1,3 @@
+aggregate configurations: 24 (expect 24)
+measured samples: 48 (expect 48)
+OVERALL: PASS

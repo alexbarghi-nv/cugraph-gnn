@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <wholememory/wholememory.h>
@@ -113,6 +113,23 @@ wholememory_error_code_t wholememory_malloc(wholememory_handle_t* wholememory_ha
                                          memory_location,
                                          data_granularity,
                                          rank_entry_partition);
+}
+
+wholememory_error_code_t wholememory_open_tiledb(wholememory_handle_t* wholememory_handle_ptr,
+                                                 const char* array_uri,
+                                                 size_t total_size,
+                                                 wholememory_comm_t comm,
+                                                 size_t data_granularity,
+                                                 size_t* rank_entry_partition,
+                                                 wholememory_tiledb_array_layout_t array_layout)
+{
+  return wholememory::create_tiledb_wholememory(wholememory_handle_ptr,
+                                                array_uri,
+                                                total_size,
+                                                comm,
+                                                data_granularity,
+                                                rank_entry_partition,
+                                                array_layout);
 }
 
 wholememory_error_code_t wholememory_free(wholememory_handle_t wholememory_handle)
@@ -256,6 +273,10 @@ wholememory_error_code_t wholememory_load_from_file(wholememory_handle_t wholeme
                                                     int file_count,
                                                     int round_robin_size)
 {
+  if (wholememory_get_memory_location(wholememory_handle) == WHOLEMEMORY_ML_TILEDB) {
+    WHOLEMEMORY_ERROR("TileDB-backed WholeMemory handles are read-only");
+    return WHOLEMEMORY_NOT_SUPPORTED;
+  }
   return wholememory::load_file_to_handle(wholememory_handle,
                                           memory_offset,
                                           memory_entry_size,
@@ -271,6 +292,10 @@ wholememory_error_code_t wholememory_store_to_file(wholememory_handle_t wholemem
                                                    size_t file_entry_size,
                                                    const char* local_file_name)
 {
+  if (wholememory_get_memory_location(wholememory_handle) == WHOLEMEMORY_ML_TILEDB) {
+    WHOLEMEMORY_ERROR("TileDB storage cannot be exported through a local memory pointer");
+    return WHOLEMEMORY_NOT_SUPPORTED;
+  }
   return wholememory::store_handle_to_file(
     wholememory_handle, memory_offset, memory_entry_stride, file_entry_size, local_file_name);
 }

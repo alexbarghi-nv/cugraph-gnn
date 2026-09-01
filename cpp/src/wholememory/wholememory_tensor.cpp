@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "wholememory/wholememory_tensor.h"
@@ -93,6 +93,55 @@ wholememory_error_code_t wholememory_create_tensor(
   inc_tensor_count();
   if (ret_code != WHOLEMEMORY_SUCCESS) { free(wholememory_tensor); }
   return ret_code;
+}
+
+wholememory_error_code_t wholememory_create_tiledb_tensor(
+  wholememory_tensor_t* p_wholememory_tensor,
+  wholememory_tensor_description_t* tensor_description,
+  wholememory_comm_t comm,
+  const char* array_uri,
+  size_t* tensor_entry_partition,
+  wholememory_tiledb_array_layout_t array_layout)
+{
+  if (p_wholememory_tensor == nullptr || tensor_description == nullptr || comm == nullptr ||
+      array_uri == nullptr || array_uri[0] == '\0') {
+    return WHOLEMEMORY_INVALID_INPUT;
+  }
+  if (tensor_description->dim <= 0 || tensor_description->dim > 2 ||
+      tensor_description->storage_offset != 0 ||
+      tensor_description->strides[tensor_description->dim - 1] != 1 ||
+      tensor_description->dtype <= WHOLEMEMORY_DT_UNKNOWN ||
+      tensor_description->dtype >= WHOLEMEMORY_DT_COUNT) {
+    return WHOLEMEMORY_INVALID_INPUT;
+  }
+
+  auto const element_count = wholememory_get_memory_element_count_from_tensor(tensor_description);
+  auto const element_size  = wholememory_dtype_get_element_size(tensor_description->dtype);
+  auto const total_size    = element_count * element_size;
+  auto const row_bytes     = tensor_description->strides[0] * element_size;
+
+  auto* tensor = static_cast<wholememory_tensor_*>(malloc(sizeof(wholememory_tensor_)));
+  if (tensor == nullptr) { return WHOLEMEMORY_OUT_OF_MEMORY; }
+  tensor->tensor_description = *tensor_description;
+  tensor->own_handle         = true;
+  tensor->is_wholememory     = true;
+  tensor->root_tensor        = tensor;
+  tensor->wholememory_handle = nullptr;
+
+  auto const result = wholememory_open_tiledb(&tensor->wholememory_handle,
+                                              array_uri,
+                                              total_size,
+                                              comm,
+                                              row_bytes,
+                                              tensor_entry_partition,
+                                              array_layout);
+  if (result != WHOLEMEMORY_SUCCESS) {
+    free(tensor);
+    return result;
+  }
+  *p_wholememory_tensor = tensor;
+  inc_tensor_count();
+  return WHOLEMEMORY_SUCCESS;
 }
 
 wholememory_error_code_t wholememory_destroy_tensor(wholememory_tensor_t wholememory_tensor)
@@ -242,6 +291,10 @@ wholememory_error_code_t wholememory_tensor_map_local_tensor(
   void* local_ptr;
   size_t local_size, local_offset;
   auto* handle = wholememory_tensor_get_memory_handle(wholememory_tensor);
+  if (wholememory_get_memory_location(handle) == WHOLEMEMORY_ML_TILEDB) {
+    WHOLEMEMORY_ERROR("TileDB storage has no directly addressable local tensor");
+    return WHOLEMEMORY_NOT_SUPPORTED;
+  }
   WHOLEMEMORY_RETURN_ON_FAIL(wholememory_get_communicator(&wm_comm, handle));
   WHOLEMEMORY_RETURN_ON_FAIL(wholememory_communicator_get_rank(&world_rank, wm_comm));
 

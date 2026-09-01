@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025, NVIDIA CORPORATION.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "communicator.hpp"
@@ -347,6 +347,13 @@ bool wholememory_comm_::is_intra_mnnvl() const { return support_mnnvl; }
 bool wholememory_comm_::support_type_location(wholememory_memory_type_t memory_type,
                                               wholememory_memory_location_t memory_location) const
 {
+  if (memory_location == WHOLEMEMORY_ML_TILEDB) {
+#ifdef WITH_TILEDB_SUPPORT
+    return memory_type == WHOLEMEMORY_MT_DISTRIBUTED;
+#else
+    return false;
+#endif
+  }
   if (memory_location == WHOLEMEMORY_ML_HOST) {
     if (is_intranode() || memory_type == WHOLEMEMORY_MT_DISTRIBUTED) return true;
     return is_intra_mnnvl() && SupportEGM();

@@ -1,0 +1,375 @@
+Building for the architecture of the GPU in the system...
+-- Fetching rapids-cmake from https://github.com/rapidsai/rapids-cmake/archive/refs/heads/main.zip
+-- Executing download step for rapids-cmake
+-- Downloading...
+   dst='/raid/abarghi/cugraph-gnn/cpp/build/_deps/rapids-cmake-tmp/main.zip'
+   timeout='none'
+   inactivity timeout='none'
+-- Using src='https://github.com/rapidsai/rapids-cmake/archive/refs/heads/main.zip'
+-- [download 1% complete]
+-- [download 2% complete]
+-- [download 5% complete]
+-- [download 8% complete]
+-- [download 11% complete]
+-- [download 12% complete]
+-- [download 13% complete]
+-- [download 14% complete]
+-- [download 15% complete]
+-- [download 17% complete]
+-- [download 19% complete]
+-- [download 21% complete]
+-- [download 23% complete]
+-- [download 24% complete]
+-- [download 25% complete]
+-- [download 26% complete]
+-- [download 27% complete]
+-- [download 28% complete]
+-- [download 29% complete]
+-- [download 32% complete]
+-- [download 34% complete]
+-- [download 36% complete]
+-- [download 37% complete]
+-- [download 38% complete]
+-- [download 39% complete]
+-- [download 40% complete]
+-- [download 41% complete]
+-- [download 44% complete]
+-- [download 46% complete]
+-- [download 51% complete]
+-- [download 53% complete]
+-- [download 56% complete]
+-- [download 58% complete]
+-- [download 61% complete]
+-- [download 63% complete]
+-- [download 64% complete]
+-- [download 66% complete]
+-- [download 69% complete]
+-- [download 71% complete]
+-- [download 73% complete]
+-- [download 75% complete]
+-- [download 79% complete]
+-- [download 82% complete]
+-- [download 84% complete]
+-- [download 86% complete]
+-- [download 87% complete]
+-- [download 89% complete]
+-- [download 92% complete]
+-- [download 94% complete]
+-- [download 96% complete]
+-- [download 99% complete]
+-- [download 100% complete]
+-- Downloading... done
+-- extracting...
+     src='/raid/abarghi/cugraph-gnn/cpp/build/_deps/rapids-cmake-tmp/main.zip'
+     dst='/raid/abarghi/cugraph-gnn/cpp/build/_deps/rapids-cmake-src'
+-- extracting... [tar xf]
+-- extracting... [analysis]
+-- extracting... [rename]
+-- extracting... [clean up]
+-- extracting... done
+-- Executing update step for rapids-cmake
+-- Executing patch step for rapids-cmake
+-- The CXX compiler identification is GNU 14.4.0
+-- The CUDA compiler identification is NVIDIA 13.0.88 with host compiler GNU 14.4.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/bin/aarch64-conda-linux-gnu-c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Detecting CUDA compiler ABI info
+-- Detecting CUDA compiler ABI info - done
+-- Check for working CUDA compiler: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/bin/nvcc - skipped
+-- Detecting CUDA compile features
+-- Detecting CUDA compile features - done
+-- Using auto detection of gpu-archs: 121a-real
+-- Project WHOLEGRAPH is building for CUDA architectures:
+  121a-real
+CMAKE_INSTALL_PREFIX=/raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb
+-- Found CUDAToolkit: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/targets/sbsa-linux/include;/raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/targets/sbsa-linux/include/cccl (found version "13.0.88")
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Building for GPU_ARCHS = 121a-real
+-- Downloading CPM.cmake to /raid/abarghi/cugraph-gnn/cpp/build/cmake/CPM_0.42.0.cmake
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- cccl_cmake_dir: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/rapids/cmake/cccl
+-- Thrust: Searching for libcudacxx REQUIRED
+-- Thrust: Setting libcudacxx target to libcudacxx::libcudacxx
+-- Thrust: TargetInfo: libcudacxx::libcudacxx: (3.4.3.0)
+-- Thrust: TargetInfo: libcudacxx::libcudacxx > ALIASED_TARGET: _libcudacxx_libcudacxx
+-- Thrust: TargetInfo: libcudacxx::libcudacxx > INTERFACE_COMPILE_DEFINITIONS: $<$<CONFIG:Debug>:CCCL_ENABLE_ASSERTIONS>
+-- Thrust: TargetInfo: libcudacxx::libcudacxx > INTERFACE_INCLUDE_DIRECTORIES: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/rapids
+-- Thrust: TargetInfo: libcudacxx::libcudacxx > INTERFACE_LINK_LIBRARIES: libcudacxx::Thrust;libcudacxx::CUB
+-- Thrust: TargetInfo: Thrust::libcudacxx: (libcudacxx 3.4.3.0)
+-- Thrust: TargetInfo: Thrust::libcudacxx > ALIASED_TARGET: _Thrust_libcudacxx
+-- Thrust: TargetInfo: Thrust::libcudacxx > INTERFACE_LINK_LIBRARIES: libcudacxx::libcudacxx
+-- Thrust: TargetInfo: Thrust::Thrust: (3.4.3.0)
+-- Thrust: TargetInfo: Thrust::Thrust > ALIASED_TARGET: _Thrust_Thrust
+-- Thrust: TargetInfo: Thrust::Thrust > INTERFACE_INCLUDE_DIRECTORIES: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/rapids
+-- Thrust: TargetInfo: Thrust::Thrust > INTERFACE_LINK_LIBRARIES: Thrust::libcudacxx
+-- Thrust: Assembling target CCCL::Thrust. Options: FROM_OPTIONS;HOST_OPTION;CCCL_THRUST_HOST_SYSTEM;DEVICE_OPTION;CCCL_THRUST_DEVICE_SYSTEM;HOST_OPTION_DOC;Host system for CCCL::Thrust target.;DEVICE_OPTION_DOC;Device system for CCCL::Thrust target.;ADVANCED;GLOBAL
+-- Thrust: Creating system cache options: (advanced=Force32bit)
+-- Thrust:   - Host Option=CCCL_THRUST_HOST_SYSTEM Default=CPP Doc='Host system for CCCL::Thrust target.'
+-- Thrust:   - Device Option=CCCL_THRUST_DEVICE_SYSTEM Default=CUDA Doc='Device system for CCCL::Thrust target.'
+-- Thrust:   - Dispatch Option=THRUST_DISPATCH_TYPE Default=Dynamic Doc='Thrust dispatch type: Dynamic'
+-- Thrust: Current option settings:
+-- Thrust:   - CCCL_THRUST_HOST_SYSTEM=CPP
+-- Thrust:   - CCCL_THRUST_DEVICE_SYSTEM=CUDA
+-- Thrust:   - THRUST_DISPATCH_TYPE=Dynamic
+-- Thrust: Generating CPP targets.
+-- Thrust: TargetInfo: Thrust::CPP: (Thrust 3.4.3.0)
+-- Thrust: TargetInfo: Thrust::CPP > ALIASED_TARGET: _Thrust_CPP
+-- Thrust: TargetInfo: Thrust::CPP > INTERFACE_LINK_LIBRARIES: Thrust::Thrust
+-- Thrust: TargetInfo: Thrust::CPP::Host: 
+-- Thrust: TargetInfo: Thrust::CPP::Host > ALIASED_TARGET: _Thrust_CPP_Host
+-- Thrust: TargetInfo: Thrust::CPP::Host > INTERFACE_COMPILE_DEFINITIONS: THRUST_HOST_SYSTEM=THRUST_HOST_SYSTEM_CPP
+-- Thrust: TargetInfo: Thrust::CPP::Host > INTERFACE_LINK_LIBRARIES: Thrust::CPP
+-- Thrust: TargetInfo: Thrust::CPP::Host > INTERFACE_THRUST_HOST: CPP
+-- Thrust: TargetInfo: Thrust::CPP::Device: 
+-- Thrust: TargetInfo: Thrust::CPP::Device > ALIASED_TARGET: _Thrust_CPP_Device
+-- Thrust: TargetInfo: Thrust::CPP::Device > INTERFACE_COMPILE_DEFINITIONS: THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_CPP
+-- Thrust: TargetInfo: Thrust::CPP::Device > INTERFACE_LINK_LIBRARIES: Thrust::CPP
+-- Thrust: TargetInfo: Thrust::CPP::Device > INTERFACE_THRUST_DEVICE: CPP
+-- Thrust: Searching for CUB REQUIRED
+-- Thrust: Setting CUB target to CUB::CUB
+-- Thrust: TargetInfo: CUB::CUB: (3.4.3.0)
+-- Thrust: TargetInfo: CUB::CUB > ALIASED_TARGET: _CUB_CUB
+-- Thrust: TargetInfo: CUB::CUB > INTERFACE_INCLUDE_DIRECTORIES: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/rapids
+-- Thrust: TargetInfo: CUB::CUB > INTERFACE_LINK_LIBRARIES: CUB::libcudacxx;CUB::Thrust
+-- Thrust: TargetInfo: Thrust::CUB: (CUB 3.4.3.0)
+-- Thrust: TargetInfo: Thrust::CUB > ALIASED_TARGET: _Thrust_CUB
+-- Thrust: TargetInfo: Thrust::CUB > INTERFACE_LINK_LIBRARIES: CUB::CUB
+-- Thrust: TargetInfo: Thrust::CUDA::Device: 
+-- Thrust: TargetInfo: Thrust::CUDA::Device > ALIASED_TARGET: _Thrust_CUDA_Device
+-- Thrust: TargetInfo: Thrust::CUDA::Device > INTERFACE_COMPILE_DEFINITIONS: THRUST_DEVICE_SYSTEM=THRUST_DEVICE_SYSTEM_CUDA
+-- Thrust: TargetInfo: Thrust::CUDA::Device > INTERFACE_LINK_LIBRARIES: Thrust::CUDA
+-- Thrust: TargetInfo: Thrust::CUDA::Device > INTERFACE_THRUST_DEVICE: CUDA
+-- Thrust: TargetInfo: Thrust::CUDA: 
+-- Thrust: TargetInfo: Thrust::CUDA > ALIASED_TARGET: _Thrust_CUDA
+-- Thrust: TargetInfo: Thrust::CUDA > INTERFACE_LINK_LIBRARIES: Thrust::Thrust;Thrust::CUB
+-- Thrust: TargetInfo: CCCL::Thrust: (Thrust 3.4.3.0)
+-- Thrust: TargetInfo: CCCL::Thrust > IMPORTED: TRUE
+-- Thrust: TargetInfo: CCCL::Thrust > INTERFACE_LINK_LIBRARIES: Thrust::CPP::Host;Thrust::CUDA::Device
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- cccl_cmake_dir: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/rapids/cmake/cccl
+-- Thrust: TargetInfo: Thrust::Thrust: (3.4.3.0)
+-- Thrust: TargetInfo: Thrust::Thrust > ALIASED_TARGET: _Thrust_Thrust
+-- Thrust: TargetInfo: Thrust::Thrust > INTERFACE_INCLUDE_DIRECTORIES: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/rapids
+-- Thrust: TargetInfo: Thrust::Thrust > INTERFACE_LINK_LIBRARIES: Thrust::libcudacxx
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- cccl_cmake_dir: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/rapids/cmake/cccl
+-- Thrust: TargetInfo: Thrust::Thrust: (3.4.3.0)
+-- Thrust: TargetInfo: Thrust::Thrust > ALIASED_TARGET: _Thrust_Thrust
+-- Thrust: TargetInfo: Thrust::Thrust > INTERFACE_INCLUDE_DIRECTORIES: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/rapids
+-- Thrust: TargetInfo: Thrust::Thrust > INTERFACE_LINK_LIBRARIES: Thrust::libcudacxx
+-- Finding CCCL components: Thrust;CUB;libcudacxx
+-- cccl_cmake_dir: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/rapids/cmake/cccl
+-- Thrust: TargetInfo: Thrust::Thrust: (3.4.3.0)
+-- Thrust: TargetInfo: Thrust::Thrust > ALIASED_TARGET: _Thrust_Thrust
+-- Thrust: TargetInfo: Thrust::Thrust > INTERFACE_INCLUDE_DIRECTORIES: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/rapids
+-- Thrust: TargetInfo: Thrust::Thrust > INTERFACE_LINK_LIBRARIES: Thrust::libcudacxx
+-- CPM: Using local package raft@26.10.0
+-- WHOLEGRAPH: Using RAFT located in /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/cmake/raft
+-- Found NCCL: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/libnccl.so
+-- CPM: Adding package GTest@1.16.0 (1.16.0)
+-- The C compiler identification is GNU 14.4.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/bin/aarch64-conda-linux-gnu-cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- WHOLEGRAPH: Building wholegraph C++ benchmarks: ON
+-- Could NOT find Doxygen (missing: DOXYGEN_EXECUTABLE) (Required is at least version "1.8.11")
+-- Configuring done (42.2s)
+-- Generating done (0.1s)
+-- Build files have been written to: /raid/abarghi/cugraph-gnn/cpp/build
+[  1%] Building CXX object _deps/gtest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[  2%] Building CXX object CMakeFiles/wholememory_tiledb_ingest.dir/tools/tiledb_ingest.cpp.o
+[  2%] Building CXX object CMakeFiles/wholegraph.dir/src/cuda_macros.cpp.o
+[  3%] Building CXX object CMakeFiles/wholegraph.dir/src/graph_ops/csr_add_self_loop.cpp.o
+[  4%] Building CXX object CMakeFiles/wholegraph.dir/src/logger.cpp.o
+[  6%] Building CXX object CMakeFiles/wholegraph.dir/src/graph_ops/append_unique.cpp.o
+[  6%] Building CUDA object CMakeFiles/wholegraph.dir/src/graph_ops/csr_add_self_loop_impl.cu.o
+[  7%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholegraph_ops/raft_random_gen.cu.o
+[  8%] Building CUDA object CMakeFiles/wholegraph.dir/src/graph_ops/append_unique_impl.cu.o
+[  8%] Building CXX object CMakeFiles/wholegraph.dir/src/net_utils.cpp.o
+[  9%] Building CXX object CMakeFiles/wholegraph.dir/src/parallel_utils.cpp.o
+[ 10%] Building CXX object CMakeFiles/wholegraph.dir/src/nvml_wrap.cpp.o
+[ 11%] Building CXX object CMakeFiles/wholegraph.dir/src/wholegraph_ops/unweighted_sample_without_replacement.cpp.o
+[ 12%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholegraph_ops/unweighted_sample_without_replacement_impl_mapped.cu.o
+[ 12%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholegraph_ops/unweighted_sample_without_replacement_impl_nccl.cu.o
+[ 13%] Building CXX object CMakeFiles/wholegraph.dir/src/wholegraph_ops/weighted_sample_without_replacement.cpp.o
+[ 14%] Linking CXX executable wholememory_tiledb_ingest
+[ 14%] Built target wholememory_tiledb_ingest
+[ 15%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholegraph_ops/weighted_sample_without_replacement_impl_mapped.cu.o
+[ 16%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/communicator.cpp.o
+[ 17%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/embedding.cpp.o
+[ 17%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/embedding_cache.cpp.o
+[ 18%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/embedding_optimizer.cpp.o
+[ 19%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/env_func_ptrs.cpp.o
+[ 20%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/file_io.cpp.o
+[ 21%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/global_reference.cpp.o
+[ 22%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/initialize.cpp.o
+[ 22%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/memory_handle.cpp.o
+[ 23%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/nccl_comms.cpp.o
+[ 24%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/system_info.cpp.o
+[ 25%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/tensor_description.cpp.o
+[ 26%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/tiledb_storage.cpp.o
+[ 26%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/wholememory.cpp.o
+[ 27%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory/wholememory_tensor.cpp.o
+[ 28%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/bucket_ids_for_hierarchy_func.cu.o
+[ 29%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/bucket_ids_func.cu.o
+[ 30%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/embedding_cache_func.cu.o
+[ 31%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/embedding_optimizer_func.cu.o
+[ 31%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/exchange_embeddings_nccl_func.cu.o
+[ 32%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/exchange_ids_nccl_func.cu.o
+[ 33%] Linking CXX static library ../../../lib/libgtest.a
+[ 33%] Built target gtest
+[ 34%] Building CXX object _deps/gtest-build/googlemock/CMakeFiles/gmock.dir/src/gmock-all.cc.o
+[ 35%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/gather_cached_func.cu.o
+[ 36%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/gather_func.cu.o
+[ 37%] Linking CXX static library ../../../lib/libgmock.a
+[ 37%] Built target gmock
+[ 38%] Building CXX object _deps/gtest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[ 39%] Linking CXX static library ../../../lib/libgtest_main.a
+[ 39%] Built target gtest_main
+[ 40%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/gather_func_impl_floating_data_int32_indices.cu.o
+[ 40%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/gather_func_impl_floating_data_int64_indices.cu.o
+[ 41%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/gather_func_impl_integer_data_int32_indices.cu.o
+[ 42%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/gather_func_impl_integer_data_int64_indices.cu.o
+[ 43%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/map_indices_func.cu.o
+[ 44%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/nvshmem_gather_func_impl_floating_data_int32_indices.cu.o
+[ 45%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/nvshmem_gather_func_impl_floating_data_int64_indices.cu.o
+[ 45%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/nvshmem_gather_func_impl_integer_data_int32_indices.cu.o
+[ 46%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/nvshmem_gather_func_impl_integer_data_int64_indices.cu.o
+[ 47%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/nvshmem_scatter_func_impl_floating_data_int32_indices.cu.o
+[ 48%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/nvshmem_scatter_func_impl_floating_data_int64_indices.cu.o
+[ 49%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/nvshmem_scatter_func_impl_integer_data_int32_indices.cu.o
+[ 49%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/nvshmem_scatter_func_impl_integer_data_int64_indices.cu.o
+[ 50%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/scatter_func.cu.o
+[ 51%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/scatter_func_impl_floating_data_int32_indices.cu.o
+[ 52%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/scatter_func_impl_floating_data_int64_indices.cu.o
+[ 53%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/scatter_func_impl_integer_data_int32_indices.cu.o
+[ 54%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/scatter_func_impl_integer_data_int64_indices.cu.o
+[ 54%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/sort_indices_func.cu.o
+[ 55%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/sort_unique_ids_for_hierarchy_func.cu.o
+[ 56%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/functions/sort_unique_indices_func.cu.o
+[ 57%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory_ops/gather_op.cpp.o
+[ 58%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/gather_op_impl_hierarchy.cu.o
+[ 58%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/gather_op_impl_mapped.cu.o
+[ 59%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/gather_op_impl_nccl.cu.o
+[ 60%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/gather_op_impl_nvshmem.cu.o
+[ 61%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory_ops/scatter_op.cpp.o
+[ 62%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/scatter_op_impl.nvshmem.cu.o
+[ 63%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/scatter_op_impl_mapped.cu.o
+[ 63%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/scatter_op_impl_nccl.cu.o
+[ 64%] Building CXX object CMakeFiles/wholegraph.dir/src/wholememory_ops/thrust_allocator.cpp.o
+[ 65%] Building CUDA object CMakeFiles/wholegraph.dir/src/wholememory_ops/wholememory_test_op.cu.o
+[ 66%] Building CXX object _deps/gtest-build/googlemock/CMakeFiles/gmock_main.dir/src/gmock_main.cc.o
+[ 66%] Linking CXX static library ../../../lib/libgmock_main.a
+[ 66%] Built target gmock_main
+[ 67%] Linking CXX shared library libwholegraph.so
+[ 67%] Built target wholegraph
+[ 69%] Building CXX object tests/CMakeFiles/TILEDB_STORAGE_TEST.dir/wholememory/tiledb_storage_tests.cpp.o
+[ 69%] Building CUDA object tests/CMakeFiles/WHOLEGRAPH_CSR_WEIGHTED_SAMPLE_WITHOUT_REPLACEMENT_TEST.dir/wholegraph_ops/wholegraph_csr_weighted_sample_without_replacement_tests.cu.o
+[ 70%] Building CUDA object tests/CMakeFiles/WHOLEMEMORY_SCATTER_TEST.dir/wholememory_ops/wholememory_scatter_tests.cu.o
+[ 71%] Building CXX object tests/CMakeFiles/WHOLEMEMORY_COMM_TEST.dir/wholememory/wholememory_comm_tests.cpp.o
+[ 72%] Building CUDA object tests/CMakeFiles/WHOLEMEMORY_GATHER_TEST.dir/wholememory_ops/wholememory_gather_tests.cu.o
+[ 72%] Building CXX object tests/CMakeFiles/PARALLEL_UTILS_TEST.dir/parallel_utils_tests.cpp.o
+[ 73%] Building CUDA object tests/CMakeFiles/WHOLEGRAPH_EMBEDDING_GRADIENT_APPLY_TEST.dir/wholememory_ops/wholememory_embedding_gradient_apply_tests.cu.o
+[ 74%] Building CXX object tests/CMakeFiles/WHOLEMEMORY_HANDLE_TEST.dir/wholememory/wholememory_handle_tests.cpp.o
+[ 75%] Building CXX object tests/CMakeFiles/WHOLEMEMORY_TENSOR_TEST.dir/wholememory/wholememory_tensor_tests.cpp.o
+[ 76%] Building CUDA object tests/CMakeFiles/WHOLEGRAPH_CSR_UNWEIGHTED_SAMPLE_WITHOUT_REPLACEMENT_TEST.dir/wholegraph_ops/wholegraph_csr_unweighted_sample_without_replacement_tests.cu.o
+[ 78%] Building CUDA object tests/CMakeFiles/WHOLEGRAPH_CACHESET_TEST.dir/wholememory_ops/cacheset_tests.cu.o
+[ 78%] Building CUDA object tests/CMakeFiles/WHOLEGRAPH_EMBEDDING_TEST.dir/wholememory_ops/wholememory_embedding_tests.cu.o
+[ 79%] Linking CXX executable ../gtests/TILEDB_STORAGE_TEST
+[ 79%] Built target TILEDB_STORAGE_TEST
+[ 80%] Building CUDA object tests/CMakeFiles/WHOLEGRAPH_CSR_UNWEIGHTED_SAMPLE_WITHOUT_REPLACEMENT_TEST.dir/wholegraph_ops/graph_sampling_test_utils.cu.o
+[ 81%] Linking CXX executable ../gtests/PARALLEL_UTILS_TEST
+[ 82%] Linking CXX executable ../gtests/WHOLEMEMORY_TENSOR_TEST
+[ 82%] Built target PARALLEL_UTILS_TEST
+[ 83%] Building CUDA object tests/CMakeFiles/WHOLEGRAPH_EMBEDDING_GRADIENT_APPLY_TEST.dir/wholememory_ops/embedding_test_utils.cu.o
+[ 83%] Built target WHOLEMEMORY_TENSOR_TEST
+[ 84%] Building CUDA object tests/CMakeFiles/GRAPH_APPEND_UNIQUE_TEST.dir/graph_ops/append_unique_tests.cu.o
+[ 85%] Linking CXX executable ../gtests/WHOLEMEMORY_COMM_TEST
+[ 85%] Built target WHOLEMEMORY_COMM_TEST
+[ 86%] Building CUDA object tests/CMakeFiles/GRAPH_APPEND_UNIQUE_TEST.dir/graph_ops/append_unique_test_utils.cu.o
+[ 87%] Linking CXX executable ../gtests/WHOLEMEMORY_HANDLE_TEST
+[ 87%] Built target WHOLEMEMORY_HANDLE_TEST
+[ 87%] Building CUDA object tests/CMakeFiles/GRAPH_APPEND_UNIQUE_TEST.dir/wholegraph_ops/graph_sampling_test_utils.cu.o
+[ 88%] Building CUDA object tests/CMakeFiles/WHOLEMEMORY_SCATTER_TEST.dir/wholememory_ops/embedding_test_utils.cu.o
+[ 89%] Building CUDA object tests/CMakeFiles/WHOLEGRAPH_CSR_WEIGHTED_SAMPLE_WITHOUT_REPLACEMENT_TEST.dir/wholegraph_ops/graph_sampling_test_utils.cu.o
+[ 90%] Building CUDA object tests/CMakeFiles/WHOLEMEMORY_GATHER_TEST.dir/wholememory_ops/embedding_test_utils.cu.o
+[ 90%] Building CUDA object tests/CMakeFiles/WHOLEGRAPH_EMBEDDING_TEST.dir/wholememory_ops/embedding_test_utils.cu.o
+[ 91%] Building CUDA object tests/CMakeFiles/GRAPH_CSR_ADD_SELF_LOOP_TEST.dir/graph_ops/csr_add_self_loop_tests.cu.o
+[ 91%] Building CUDA object bench/CMakeFiles/GATHER_SCATTER_BENCH.dir/wholememory_ops/gather_scatter_bench.cu.o
+[ 92%] Building CXX object bench/CMakeFiles/GATHER_SCATTER_BENCH.dir/common/wholegraph_benchmark.cpp.o
+[ 93%] Building CUDA object tests/CMakeFiles/GRAPH_CSR_ADD_SELF_LOOP_TEST.dir/graph_ops/csr_add_self_loop_utils.cu.o
+[ 94%] Building CUDA object tests/CMakeFiles/GRAPH_CSR_ADD_SELF_LOOP_TEST.dir/wholegraph_ops/graph_sampling_test_utils.cu.o
+[ 95%] Linking CXX executable ../gtests/WHOLEGRAPH_EMBEDDING_GRADIENT_APPLY_TEST
+[ 95%] Built target WHOLEGRAPH_EMBEDDING_GRADIENT_APPLY_TEST
+[ 96%] Linking CXX executable ../gbench/GATHER_SCATTER_BENCH
+[ 96%] Built target GATHER_SCATTER_BENCH
+[ 96%] Linking CXX executable ../gtests/WHOLEMEMORY_SCATTER_TEST
+[ 96%] Built target WHOLEMEMORY_SCATTER_TEST
+[ 96%] Linking CXX executable ../gtests/WHOLEMEMORY_GATHER_TEST
+[ 96%] Built target WHOLEMEMORY_GATHER_TEST
+[ 97%] Linking CXX executable ../gtests/WHOLEGRAPH_EMBEDDING_TEST
+[ 97%] Built target WHOLEGRAPH_EMBEDDING_TEST
+[ 98%] Linking CXX executable ../gtests/WHOLEGRAPH_CSR_UNWEIGHTED_SAMPLE_WITHOUT_REPLACEMENT_TEST
+[ 98%] Built target WHOLEGRAPH_CSR_UNWEIGHTED_SAMPLE_WITHOUT_REPLACEMENT_TEST
+[ 98%] Linking CXX executable ../gtests/WHOLEGRAPH_CACHESET_TEST
+[ 99%] Linking CXX executable ../gtests/GRAPH_APPEND_UNIQUE_TEST
+[ 99%] Built target WHOLEGRAPH_CACHESET_TEST
+[ 99%] Built target GRAPH_APPEND_UNIQUE_TEST
+[ 99%] Linking CXX executable ../gtests/WHOLEGRAPH_CSR_WEIGHTED_SAMPLE_WITHOUT_REPLACEMENT_TEST
+[ 99%] Built target WHOLEGRAPH_CSR_WEIGHTED_SAMPLE_WITHOUT_REPLACEMENT_TEST
+[100%] Linking CXX executable ../gtests/GRAPH_CSR_ADD_SELF_LOOP_TEST
+[100%] Built target GRAPH_CSR_ADD_SELF_LOOP_TEST
+Install the project...
+-- Install configuration: "Release"
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/bin/wholememory_tiledb_ingest
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/wholememory/device_reference.cuh
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/wholememory/embedding.h
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/wholememory/env_func_ptrs.h
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/wholememory/global_reference.h
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/wholememory/tensor_description.h
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/wholememory/wholememory.h
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/wholememory/wholememory_tensor.h
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/wholememory/wholememory_op.h
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/wholememory/wholegraph_op.h
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/include/wholememory/graph_op.h
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/libwholegraph.so
+-- Set non-toolchain portion of runtime path of "/raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/libwholegraph.so" to "$ORIGIN"
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/cmake/wholegraph/wholegraph-targets.cmake
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/cmake/wholegraph/wholegraph-targets-release.cmake
+-- Up-to-date: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/cmake/wholegraph
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/cmake/wholegraph/wholegraph-config.cmake
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/cmake/wholegraph/wholegraph-config-version.cmake
+-- Installing: /raid/abarghi/miniforge3/envs/cugraph-gnn-tiledb/lib/cmake/wholegraph/wholegraph-dependencies.cmake
+Obtaining file:///raid/abarghi/cugraph-gnn/python/pylibwholegraph
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: pylibwholegraph
+  Building editable for pylibwholegraph (pyproject.toml): started
+  Building editable for pylibwholegraph (pyproject.toml): finished with status 'done'
+  Created wheel for pylibwholegraph: filename=pylibwholegraph-26.10.0-cp311-abi3-linux_aarch64.whl size=243522 sha256=112fd056dba4440101994ad3b3ba932524552574ae670ebb653a03989aa6a147
+  Stored in directory: /tmp/pip-ephem-wheel-cache-lnqn9js_/wheels/9c/19/d8/493fb62fb3694f83903bbec66a81871bfd780622db5f9009f5
+Successfully built pylibwholegraph
+Installing collected packages: pylibwholegraph
+Successfully installed pylibwholegraph-26.10.0
+Obtaining file:///raid/abarghi/cugraph-gnn/python/cugraph-pyg
+  Checking if build backend supports build_editable: started
+  Checking if build backend supports build_editable: finished with status 'done'
+  Preparing editable metadata (pyproject.toml): started
+  Preparing editable metadata (pyproject.toml): finished with status 'done'
+Building wheels for collected packages: cugraph-pyg
+  Building editable for cugraph-pyg (pyproject.toml): started
+  Building editable for cugraph-pyg (pyproject.toml): finished with status 'done'
+  Created wheel for cugraph-pyg: filename=cugraph_pyg-26.10.0-0.editable-py3-none-any.whl size=7805 sha256=0ab909e58f343fbd09fb91865767fffa42d988f4521895e64fc3ac479aa8e613
+  Stored in directory: /tmp/pip-ephem-wheel-cache-nz94p2js/wheels/33/e4/22/cb99919b4a002071303531a51024d11a2c31c2b0fc17a72ff6
+Successfully built cugraph-pyg
+Installing collected packages: cugraph-pyg
+Successfully installed cugraph-pyg-26.10.0

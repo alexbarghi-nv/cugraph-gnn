@@ -87,3 +87,13 @@ _text
 # clang tooling
 compile_commands.json
 .clangd/
+
+## TileDB loading benchmark (see cpp/docs/TILEDB_LOADING_BENCHMARK_RUNBOOK.md)
+# Raw data/result dirs belong under /raid, outside the repo; these guard against
+# accidentally pointing a run's data_dir/result_dir inside the working tree.
+/wholememory-tiledb-loading-*/
+/wholememory-tiledb-loading-results-*/
+.benchmarks/
+# Per-rank checkpoint files are redundant with the aggregate JSON/CSV and should
+# only be committed deliberately (git add -f) when needed to diagnose a discrepancy.
+nvme_benchmark_results/**/*.rank-*.json

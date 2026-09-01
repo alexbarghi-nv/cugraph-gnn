@@ -1,0 +1,13 @@
+Running main() from gmock_main.cc
+[0;32m[==========] [mRunning 2 tests from 1 test suite.
+[0;32m[----------] [mGlobal test environment set-up.
+[0;32m[----------] [m2 tests from TileDBStorage
+[0;32m[ RUN      ] [mTileDBStorage.PreservesRequestOrderDuplicatesAndColumnSlices
+[0;32m[       OK ] [mTileDBStorage.PreservesRequestOrderDuplicatesAndColumnSlices (540 ms)
+[0;32m[ RUN      ] [mTileDBStorage.AcceptsGlobalIdsForALocalPartition
+[0;32m[       OK ] [mTileDBStorage.AcceptsGlobalIdsForALocalPartition (19 ms)
+[0;32m[----------] [m2 tests from TileDBStorage (559 ms total)
+
+[0;32m[----------] [mGlobal test environment tear-down
+[0;32m[==========] [m2 tests from 1 test suite ran. (559 ms total)
+[0;32m[  PASSED  ] [m2 tests.

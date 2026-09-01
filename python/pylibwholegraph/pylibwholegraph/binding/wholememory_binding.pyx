@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION.
+# SPDX-FileCopyrightText: Copyright (c) 2019-2026, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
 # cython: profile=False
@@ -52,6 +52,11 @@ cdef extern from "wholememory/wholememory.h":
         WHOLEMEMORY_ML_NONE                 "WHOLEMEMORY_ML_NONE"
         WHOLEMEMORY_ML_DEVICE               "WHOLEMEMORY_ML_DEVICE"
         WHOLEMEMORY_ML_HOST                 "WHOLEMEMORY_ML_HOST"
+        WHOLEMEMORY_ML_TILEDB               "WHOLEMEMORY_ML_TILEDB"
+
+    ctypedef enum wholememory_tiledb_array_layout_t:
+        WHOLEMEMORY_TILEDB_ARRAY_RANK_LOCAL "WHOLEMEMORY_TILEDB_ARRAY_RANK_LOCAL"
+        WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED "WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED"
 
     ctypedef enum wholememory_distributed_backend_t:
         WHOLEMEMORY_DB_NONE                 "WHOLEMEMORY_DB_NONE"
@@ -160,6 +165,36 @@ cdef extern from "wholememory/wholememory.h":
 
     cdef int fork_get_device_count()
 
+    cdef struct wholememory_tiledb_gather_metrics_t:
+        int valid
+        double id_routing_ms
+        double gpu_sort_ms
+        double gpu_deduplicate_ms
+        double staging_allocation_ms
+        double indices_d2h_ms
+        double tiledb_read_ms
+        double id_decode_ms
+        double id_sort_ms
+        double id_deduplicate_ms
+        double query_setup_ms
+        double range_build_ms
+        double query_submit_ms
+        double cpu_reorder_ms
+        double rows_h2d_ms
+        double gpu_expand_ms
+        double embedding_exchange_ms
+        double output_reorder_ms
+        size_t storage_requested_rows
+        size_t storage_unique_rows
+        size_t storage_range_count
+        size_t storage_query_count
+        size_t index_bytes
+        size_t raw_staging_bytes
+        size_t output_bytes
+
+    cdef wholememory_error_code_t wholememory_get_last_tiledb_gather_metrics(
+        wholememory_tiledb_gather_metrics_t* metrics)
+
     cdef wholememory_error_code_t wholememory_load_from_file(wholememory_handle_t wholememory_handle,
                                                              size_t memory_offset,
                                                              size_t memory_entry_size,
@@ -224,6 +259,7 @@ cpdef enum WholeMemoryMemoryLocation:
     MlNone = WHOLEMEMORY_ML_NONE
     MlDevice = WHOLEMEMORY_ML_DEVICE
     MlHost = WHOLEMEMORY_ML_HOST
+    MlTileDB = WHOLEMEMORY_ML_TILEDB
 
 cpdef enum WholeMemoryDistributedBackend:
     DbNone = WHOLEMEMORY_DB_NONE
@@ -258,6 +294,8 @@ cdef check_wholememory_error_code(wholememory_error_code_t err):
         raise ValueError('Invalid value')
     elif err_code == OutOfMemory:
         raise MemoryError('Out of memory')
+    elif err_code == NotSupported:
+        raise NotImplementedError('Not supported')
     else:
         raise NotImplementedError('Error code %d not recognized' % (int(err),))
 
@@ -510,6 +548,14 @@ cdef extern from "wholememory/wholememory_tensor.h":
                                                             wholememory_memory_type_t memory_type,
                                                             wholememory_memory_location_t memory_location,
                                                             size_t * tensor_entry_partition)
+
+    cdef wholememory_error_code_t wholememory_create_tiledb_tensor(
+        wholememory_tensor_t *wholememory_tensor,
+        wholememory_tensor_description_t *tensor_description,
+        wholememory_comm_t comm,
+        const char *array_uri,
+        size_t *tensor_entry_partition,
+        wholememory_tiledb_array_layout_t array_layout)
 
     cdef wholememory_error_code_t wholememory_destroy_tensor(wholememory_tensor_t wholememory_tensor)
 
@@ -1009,6 +1055,38 @@ def init(unsigned int flags, LogLevel log_level = LEVEL_INFO):
 
 def finalize():
     check_wholememory_error_code(wholememory_finalize())
+
+def get_last_tiledb_gather_metrics():
+    """Return phase timings for this thread's most recent TileDB gather."""
+    cdef wholememory_tiledb_gather_metrics_t metrics
+    check_wholememory_error_code(wholememory_get_last_tiledb_gather_metrics(&metrics))
+    return {
+        "valid": metrics.valid != 0,
+        "id_routing_ms": metrics.id_routing_ms,
+        "gpu_sort_ms": metrics.gpu_sort_ms,
+        "gpu_deduplicate_ms": metrics.gpu_deduplicate_ms,
+        "staging_allocation_ms": metrics.staging_allocation_ms,
+        "indices_d2h_ms": metrics.indices_d2h_ms,
+        "tiledb_read_ms": metrics.tiledb_read_ms,
+        "id_decode_ms": metrics.id_decode_ms,
+        "id_sort_ms": metrics.id_sort_ms,
+        "id_deduplicate_ms": metrics.id_deduplicate_ms,
+        "query_setup_ms": metrics.query_setup_ms,
+        "range_build_ms": metrics.range_build_ms,
+        "query_submit_ms": metrics.query_submit_ms,
+        "cpu_reorder_ms": metrics.cpu_reorder_ms,
+        "rows_h2d_ms": metrics.rows_h2d_ms,
+        "gpu_expand_ms": metrics.gpu_expand_ms,
+        "embedding_exchange_ms": metrics.embedding_exchange_ms,
+        "output_reorder_ms": metrics.output_reorder_ms,
+        "storage_requested_rows": metrics.storage_requested_rows,
+        "storage_unique_rows": metrics.storage_unique_rows,
+        "storage_range_count": metrics.storage_range_count,
+        "storage_query_count": metrics.storage_query_count,
+        "index_bytes": metrics.index_bytes,
+        "raw_staging_bytes": metrics.raw_staging_bytes,
+        "output_bytes": metrics.output_bytes,
+    }
 
 def create_unique_id():
     py_uid = PyWholeMemoryUniqueID()
@@ -1737,6 +1815,44 @@ def create_wholememory_tensor(PyWholeMemoryTensorDescription tensor_description,
                                                            int(mem_type),
                                                            int(mem_location),
                                                            partition_ptr))
+    return wholememory_tensor
+
+def create_tiledb_wholememory_tensor(
+        PyWholeMemoryTensorDescription tensor_description,
+        PyWholeMemoryComm comm,
+        str array_uri,
+        cython.size_t[:] tensor_entry_partition=None,
+        str array_layout="rank"):
+    """Open a read-only distributed WholeMemory tensor backed by TileDB arrays."""
+    if tensor_description.dim() != 1 and tensor_description.dim() != 2:
+        raise NotImplementedError('WholeMemory currently only supports 1D or 2D tensors')
+    if tensor_description.stride()[tensor_description.dim() - 1] != 1:
+        raise ValueError('last stride should be 1')
+    if tensor_description.storage_offset() != 0:
+        raise ValueError('storage_offset must be 0 when created')
+    if not array_uri:
+        raise ValueError('array_uri must not be empty')
+
+    wholememory_tensor = PyWholeMemoryTensor()
+    wholememory_tensor.tensor_description = tensor_description.tensor_description
+    cdef size_t* partition_ptr = NULL
+    cdef wholememory_tiledb_array_layout_t layout
+    cdef bytes encoded_uri = array_uri.encode('utf-8')
+    if array_layout == "rank":
+        layout = WHOLEMEMORY_TILEDB_ARRAY_RANK_LOCAL
+    elif array_layout == "node":
+        layout = WHOLEMEMORY_TILEDB_ARRAY_COMMUNICATOR_SHARED
+    else:
+        raise ValueError("array_layout must be 'rank' or 'node'")
+    if tensor_entry_partition is not None and tensor_entry_partition.size > 0:
+        partition_ptr = <size_t*>&tensor_entry_partition[0]
+    check_wholememory_error_code(wholememory_create_tiledb_tensor(
+        &wholememory_tensor.wholememory_tensor,
+        &wholememory_tensor.tensor_description,
+        comm.comm_id,
+        encoded_uri,
+        partition_ptr,
+        layout))
     return wholememory_tensor
 
 def make_tensor_as_wholememory(PyWholeMemoryTensorDescription tensor_description,

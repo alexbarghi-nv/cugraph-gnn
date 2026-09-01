@@ -1,0 +1,5 @@
+run_id=20260828T191645Z
+data_dir=/raid/abarghi/wholememory-tiledb-tabicl-20260828T191645Z
+result_dir=/raid/abarghi/wholememory-tiledb-tabicl-results-20260828T191645Z
+reused_full_data_dir=/raid/abarghi/wholememory-tiledb-loading-20260827T194011Z/full
+2885b66a1e7181072caac6458b69f55030afbad5

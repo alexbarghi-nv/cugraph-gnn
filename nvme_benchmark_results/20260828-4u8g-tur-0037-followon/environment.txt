@@ -1,0 +1,334 @@
+<details><summary>Click here to see environment details</summary><pre>
+     
+     **git***
+     commit 2885b66a1e7181072caac6458b69f55030afbad5 (HEAD -> prototype/tiledb-backend, origin/prototype/tiledb-backend)
+     Author: Alex Barghi <105237337+alexbarghi-nv@users.noreply.github.com>
+     Date:   Fri Aug 28 14:34:25 2026 -0400
+     
+     Add paired overlap and multi-run TileDB benchmarks
+     **git submodules***
+     
+     ***OS Information***
+     DISTRIB_ID=Ubuntu
+     DISTRIB_RELEASE=24.04
+     DISTRIB_CODENAME=noble
+     DISTRIB_DESCRIPTION="Ubuntu 24.04.4 LTS"
+     PRETTY_NAME="Ubuntu 24.04.4 LTS"
+     NAME="Ubuntu"
+     VERSION_ID="24.04"
+     VERSION="24.04.4 LTS (Noble Numbat)"
+     VERSION_CODENAME=noble
+     ID=ubuntu
+     ID_LIKE=debian
+     HOME_URL="https://www.ubuntu.com/"
+     SUPPORT_URL="https://help.ubuntu.com/"
+     BUG_REPORT_URL="https://bugs.launchpad.net/ubuntu/"
+     PRIVACY_POLICY_URL="https://www.ubuntu.com/legal/terms-and-policies/privacy-policy"
+     UBUNTU_CODENAME=noble
+     LOGO=ubuntu-logo
+     Linux 4u8g-tur-0037 6.17.0-35-generic #35~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Tue May 26 19:30:42 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
+     
+     ***GPU Information***
+     Fri Aug 28 19:16:47 2026
+     +-----------------------------------------------------------------------------------------+
+     | NVIDIA-SMI 595.71.05              Driver Version: 595.71.05      CUDA Version: 13.2     |
+     +-----------------------------------------+------------------------+----------------------+
+     | GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+     | Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+     |                                         |                        |               MIG M. |
+     |=========================================+========================+======================|
+     |   0  NVIDIA RTX PRO 6000 Blac...    Off |   00000000:01:00.0 Off |                    0 |
+     | N/A   38C    P0             53W /  600W |      14MiB /  97887MiB |      0%      Default |
+     |                                         |                        |             Disabled |
+     +-----------------------------------------+------------------------+----------------------+
+     |   1  NVIDIA RTX PRO 6000 Blac...    Off |   00000000:11:00.0 Off |                    0 |
+     | N/A   45C    P0             57W /  600W |      14MiB /  97887MiB |      0%      Default |
+     |                                         |                        |             Disabled |
+     +-----------------------------------------+------------------------+----------------------+
+     |   2  NVIDIA RTX PRO 6000 Blac...    Off |   00000000:61:00.0 Off |                    0 |
+     | N/A   38C    P0             53W /  600W |      14MiB /  97887MiB |      0%      Default |
+     |                                         |                        |             Disabled |
+     +-----------------------------------------+------------------------+----------------------+
+     |   3  NVIDIA RTX PRO 6000 Blac...    Off |   00000000:71:00.0 Off |                    0 |
+     | N/A   37C    P0             54W /  600W |      14MiB /  97887MiB |      0%      Default |
+     |                                         |                        |             Disabled |
+     +-----------------------------------------+------------------------+----------------------+
+     |   4  NVIDIA RTX PRO 6000 Blac...    Off |   00000000:81:00.0 Off |                    0 |
+     | N/A   42C    P0             56W /  600W |      14MiB /  97887MiB |      0%      Default |
+     |                                         |                        |             Disabled |
+     +-----------------------------------------+------------------------+----------------------+
+     |   5  NVIDIA RTX PRO 6000 Blac...    Off |   00000000:91:00.0 Off |                    0 |
+     | N/A   40C    P0             54W /  600W |      14MiB /  97887MiB |      0%      Default |
+     |                                         |                        |             Disabled |
+     +-----------------------------------------+------------------------+----------------------+
+     |   6  NVIDIA RTX PRO 6000 Blac...    Off |   00000000:E1:00.0 Off |                    0 |
+     | N/A   39C    P0             55W /  600W |      14MiB /  97887MiB |      0%      Default |
+     |                                         |                        |             Disabled |
+     +-----------------------------------------+------------------------+----------------------+
+     |   7  NVIDIA RTX PRO 6000 Blac...    Off |   00000000:F1:00.0 Off |                    0 |
+     | N/A   36C    P0             51W /  600W |      14MiB /  97887MiB |      0%      Default |
+     |                                         |                        |             Disabled |
+     +-----------------------------------------+------------------------+----------------------+
+     
+     +-----------------------------------------------------------------------------------------+
+     | Processes:                                                                              |
+     |  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+     |        ID   ID                                                               Usage      |
+     |=========================================================================================|
+     |    0   N/A  N/A            7065      G   /usr/lib/xorg/Xorg                        4MiB |
+     |    1   N/A  N/A            7065      G   /usr/lib/xorg/Xorg                        4MiB |
+     |    2   N/A  N/A            7065      G   /usr/lib/xorg/Xorg                        4MiB |
+     |    3   N/A  N/A            7065      G   /usr/lib/xorg/Xorg                        4MiB |
+     |    4   N/A  N/A            7065      G   /usr/lib/xorg/Xorg                        4MiB |
+     |    5   N/A  N/A            7065      G   /usr/lib/xorg/Xorg                        4MiB |
+     |    6   N/A  N/A            7065      G   /usr/lib/xorg/Xorg                        4MiB |
+     |    7   N/A  N/A            7065      G   /usr/lib/xorg/Xorg                        4MiB |
+     +-----------------------------------------------------------------------------------------+
+     
+     ***CPU***
+     Architecture:                            x86_64
+     CPU op-mode(s):                          32-bit, 64-bit
+     Address sizes:                           52 bits physical, 57 bits virtual
+     Byte Order:                              Little Endian
+     CPU(s):                                  256
+     On-line CPU(s) list:                     0-255
+     Vendor ID:                               AuthenticAMD
+     Model name:                              AMD EPYC 9555 64-Core Processor
+     CPU family:                              26
+     Model:                                   2
+     Thread(s) per core:                      2
+     Core(s) per socket:                      64
+     Socket(s):                               2
+     Stepping:                                1
+     Frequency boost:                         enabled
+     CPU(s) scaling MHz:                      56%
+     CPU max MHz:                             4410.8110
+     CPU min MHz:                             1210.8110
+     BogoMIPS:                                6399.96
+     Flags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush mmx fxsr sse sse2 ht syscall nx mmxext fxsr_opt pdpe1gb rdtscp lm constant_tsc rep_good amd_lbr_v2 nopl xtopology nonstop_tsc cpuid extd_apicid aperfmperf rapl pni pclmulqdq monitor ssse3 fma cx16 pcid sse4_1 sse4_2 x2apic movbe popcnt aes xsave avx f16c rdrand lahf_lm cmp_legacy svm extapic cr8_legacy abm sse4a misalignsse 3dnowprefetch osvw ibs skinit wdt tce topoext perfctr_core perfctr_nb bpext perfctr_llc mwaitx cpuid_fault cpb cat_l3 cdp_l3 hw_pstate ssbd mba perfmon_v2 ibrs ibpb stibp ibrs_enhanced vmmcall fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid cqm rdt_a avx512f avx512dq adx smap avx512ifma clflushopt clwb avx512cd sha_ni avx512bw avx512vl xsaveopt xsavec xgetbv1 xsaves cqm_llc cqm_occup_llc cqm_mbm_total cqm_mbm_local user_shstk avx_vnni avx512_bf16 clzero irperf xsaveerptr rdpru wbnoinvd amd_ppin cppc arat npt lbrv svm_lock nrip_save tsc_scale vmcb_clean flushbyasid decodeassists pausefilter pfthreshold avic v_vmsave_vmload vgif x2avic v_spec_ctrl vnmi avx512vbmi umip pku ospke avx512_vbmi2 gfni vaes vpclmulqdq avx512_vnni avx512_bitalg avx512_vpopcntdq la57 rdpid bus_lock_detect movdiri movdir64b overflow_recov succor smca fsrm avx512_vp2intersect flush_l1d debug_swap amd_lbr_pmc_freeze
+     Virtualization:                          AMD-V
+     L1d cache:                               6 MiB (128 instances)
+     L1i cache:                               4 MiB (128 instances)
+     L2 cache:                                128 MiB (128 instances)
+     L3 cache:                                512 MiB (16 instances)
+     NUMA node(s):                            2
+     NUMA node0 CPU(s):                       0-63,128-191
+     NUMA node1 CPU(s):                       64-127,192-255
+     Vulnerability Gather data sampling:      Not affected
+     Vulnerability Ghostwrite:                Not affected
+     Vulnerability Indirect target selection: Not affected
+     Vulnerability Itlb multihit:             Not affected
+     Vulnerability L1tf:                      Not affected
+     Vulnerability Mds:                       Not affected
+     Vulnerability Meltdown:                  Not affected
+     Vulnerability Mmio stale data:           Not affected
+     Vulnerability Old microcode:             Not affected
+     Vulnerability Reg file data sampling:    Not affected
+     Vulnerability Retbleed:                  Not affected
+     Vulnerability Spec rstack overflow:      Mitigation; Reduced Speculation
+     Vulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl
+     Vulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization
+     Vulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; STIBP always-on; PBRSB-eIBRS Not affected; BHI Not affected
+     Vulnerability Srbds:                     Not affected
+     Vulnerability Tsa:                       Not affected
+     Vulnerability Tsx async abort:           Not affected
+     Vulnerability Vmscape:                   Mitigation; IBPB before exit to userspace
+     
+     ***CMake***
+     /raid/abarghi/.local/share/mamba/envs/tiledb-wg/bin/cmake
+     cmake version 4.4.2
+     
+     CMake suite maintained and supported by Kitware (kitware.com/cmake).
+     
+     ***g++***
+     /usr/bin/g++
+     g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+     Copyright (C) 2023 Free Software Foundation, Inc.
+     This is free software; see the source for copying conditions.  There is NO
+     warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+     
+     
+     ***nvcc***
+     /raid/abarghi/.local/share/mamba/envs/tiledb-wg/bin/nvcc
+     nvcc: NVIDIA (R) Cuda compiler driver
+     Copyright (c) 2005-2025 NVIDIA Corporation
+     Built on Tue_May_27_02:21:03_PDT_2025
+     Cuda compilation tools, release 12.9, V12.9.86
+     Build cuda_12.9.r12.9/compiler.36037853_0
+     
+     ***Python***
+     /raid/abarghi/.local/share/mamba/envs/tiledb-wg/bin/python
+     Python 3.12.13
+     
+     ***Environment Variables***
+     PATH                            : /raid/abarghi/.local/share/mamba/envs/tiledb-wg/bin:/raid/abarghi/.local/share/mamba/condabin:/home/nfs/abarghi/.local/bin:/raid/abarghi/.local/bin:/raid/abarghi/gh/bin:/home/nfs/abarghi/.local/bin:/raid/abarghi/miniforge3/bin:/home/nfs/abarghi/.vscode-server/cli/servers/Stable-08d4889f9ec4a1685d257b9b95de036c8e1ce1e5/server/bin/remote-cli:/home/nfs/abarghi/.local/bin:/raid/abarghi/.local/bin:/raid/abarghi/gh/bin:/home/nfs/abarghi/.local/bin:/raid/abarghi/miniforge3/bin:/home/nfs/abarghi/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin
+     LD_LIBRARY_PATH                 :
+     NUMBAPRO_NVVM                   :
+     NUMBAPRO_LIBDEVICE              :
+     CONDA_PREFIX                    : /raid/abarghi/.local/share/mamba/envs/tiledb-wg
+     PYTHON_PATH                     :
+     
+     conda not found
+     ***pip packages***
+     /raid/abarghi/.local/share/mamba/envs/tiledb-wg/bin/pip
+     Package                          Version
+     -------------------------------- -----------
+     aiohappyeyeballs                 2.7.1
+     aiohttp                          3.14.3
+     aiosignal                        1.4.0
+     alabaster                        1.0.0
+     attrs                            26.1.0
+     babel                            2.18.0
+     backports.zstd                   1.7.0
+     bokeh                            3.9.2
+     breathe                          4.36.0
+     Brotli                           1.2.0
+     cachetools                       7.1.7
+     certifi                          2026.7.22
+     cffi                             2.1.1
+     cfgv                             3.5.0
+     charset-normalizer               3.5.1
+     click                            8.4.2
+     cloudpickle                      3.1.2
+     colorama                         0.4.6
+     contourpy                        1.3.3
+     coverage                         7.15.4
+     cuda-bindings                    12.9.7
+     cuda-core                        1.1.0
+     cuda-pathfinder                  1.6.1
+     cudf                             26.10.0a294
+     cugraph                          26.10.0a30
+     cugraph-pyg                      26.10.0
+     cuml                             26.10.0a76
+     cupy                             14.2.0
+     Cython                           3.2.9
+     cytoolz                          1.1.0
+     dask                             2026.7.1
+     dask-cuda                        26.10.0a10
+     dask-cudf                        26.10.0a294
+     distlib                          0.4.3
+     distributed                      2026.7.1
+     distributed-ucxx                 0.52.0
+     docutils                         0.21.2
+     exceptiongroup                   1.3.1
+     execnet                          2.1.2
+     filelock                         3.32.3
+     frozenlist                       1.8.0
+     fsspec                           2026.7.0
+     gmpy2                            2.3.1
+     h2                               4.4.1
+     hpack                            4.2.0
+     hyperframe                       6.1.0
+     identify                         2.6.19
+     idna                             3.19
+     imagesize                        2.0.0
+     importlib_metadata               9.0.0
+     importlib_resources              7.1.0
+     iniconfig                        2.3.0
+     Jinja2                           3.1.6
+     joblib                           1.5.3
+     jsonschema                       4.26.0
+     jsonschema-specifications        2025.9.1
+     llvmlite                         0.46.0
+     locket                           1.0.0
+     lz4                              4.4.5
+     markdown-it-py                   4.2.0
+     MarkupSafe                       3.0.3
+     mdurl                            0.1.2
+     mpmath                           1.3.0
+     msgpack                          1.2.1
+     multidict                        6.7.1
+     narwhals                         2.25.0
+     networkx                         3.6.1
+     nodeenv                          1.10.0
+     numba                            0.64.0
+     numba-cuda                       0.30.4
+     numba_cuda_mlir                  0.5.0
+     numpy                            2.4.6
+     nvforest                         26.10.0
+     nvidia-ml-py                     13.610.43
+     nvtx                             0.2.16
+     optree                           0.20.0
+     packaging                        26.3
+     pandas                           3.0.5
+     partd                            1.4.2
+     pathspec                         1.1.1
+     pillow                           12.3.0
+     pip                              26.2.1
+     platformdirs                     4.11.3
+     pluggy                           1.6.0
+     pre_commit                       4.6.2
+     propcache                        0.5.2
+     psutil                           7.2.2
+     py                               1.11.0
+     py-cpuinfo                       9.0.0
+     pyarrow                          23.0.1
+     pybind11                         3.0.1
+     pybind11-global                  3.0.1
+     pycparser                        3.0
+     Pygments                         2.21.0
+     pylibcudf                        26.10.0a294
+     pylibcugraph                     26.10.0a30
+     pylibraft                        26.10.0a28
+     pylibwholegraph                  26.10.0
+     pyparsing                        3.3.2
+     PySocks                          1.7.1
+     pytest                           9.1.1
+     pytest-benchmark                 5.2.3
+     pytest-cov                       7.1.0
+     pytest-forked                    1.7.5
+     pytest-xdist                     3.8.0
+     python-dateutil                  2.9.0.post0
+     python-discovery                 1.5.2
+     PyYAML                           6.0.3
+     raft-dask                        26.10.0a28
+     rapids-build-backend             0.4.2
+     rapids-dask-dependency           26.10.0a0
+     rapids-dependency-file-generator 1.22.0
+     referencing                      0.37.0
+     requests                         2.34.2
+     rich                             15.0.0
+     rmm                              26.10.0a32
+     roman-numerals                   4.1.0
+     roman-numerals-py                4.1.0
+     rpds-py                          2026.6.3
+     scikit_build_core                1.0.3
+     scikit-learn                     1.9.0
+     scipy                            1.17.1
+     setuptools                       84.0.0
+     six                              1.17.0
+     snowballstemmer                  3.1.1
+     sortedcontainers                 2.4.0
+     Sphinx                           8.2.3
+     sphinxcontrib-applehelp          2.0.0
+     sphinxcontrib-devhelp            2.0.0
+     sphinxcontrib-htmlhelp           2.1.0
+     sphinxcontrib-jsmath             1.0.1
+     sphinxcontrib-qthelp             2.0.0
+     sphinxcontrib-serializinghtml    2.0.0
+     sympy                            1.14.0
+     tblib                            3.2.2
+     threadpoolctl                    3.6.0
+     tomli                            2.4.1
+     tomlkit                          0.15.1
+     toolz                            1.1.0
+     torch                            2.10.0
+     torch-geometric                  2.8.0.post1
+     torchdata                        0.11.0
+     tornado                          6.5.8
+     tqdm                             4.70.0
+     treelite                         4.7.0
+     triton                           3.6.0
+     typing_extensions                4.16.0
+     ucxx                             0.52.0
+     ukkonen                          1.1.0
+     urllib3                          2.7.0
+     virtualenv                       21.7.4
+     wheel                            0.48.0
+     xxhash                           3.7.0
+     xyzservices                      2026.3.0
+     yarl                             1.24.5
+     zict                             3.0.0
+     zipp                             4.1.0
+     
+</pre></details>
