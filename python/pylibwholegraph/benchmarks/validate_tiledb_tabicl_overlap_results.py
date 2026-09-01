@@ -48,6 +48,15 @@ PHASE_COUNTS = (
     "output_bytes",
 )
 PAIRED_CASES = {"cross_rank_25", "within_rank_25"}
+IOPS_FIELDS = (
+    "storage_read_ops",
+    "storage_write_ops",
+    "storage_total_io_ops",
+    "storage_read_iops",
+    "storage_write_iops",
+    "storage_iops",
+    "storage_total_iops",
+)
 
 
 def pairing_key(sample: dict[str, Any]) -> tuple[Any, ...]:
@@ -79,6 +88,10 @@ def validate_file(path: Path, expected: tuple[int, int]) -> dict[str, Any]:
             or result["latency_mean_ms"] <= 0
         ):
             raise AssertionError(f"{path.name}: invalid aggregate latency")
+        for field in IOPS_FIELDS:
+            value = result.get(field)
+            if value is None or not math.isfinite(float(value)) or value < 0:
+                raise AssertionError(f"{path.name}: invalid aggregate {field}")
         for phase in PHASES:
             if f"{phase}_rank_max_mean_ms" not in result:
                 raise AssertionError(
@@ -92,6 +105,10 @@ def validate_file(path: Path, expected: tuple[int, int]) -> dict[str, Any]:
     for sample in samples:
         if not math.isfinite(sample["latency_ms"]) or sample["latency_ms"] <= 0:
             raise AssertionError(f"{path.name}: invalid sample latency")
+        for field in IOPS_FIELDS:
+            value = sample.get(field)
+            if value is None or not math.isfinite(float(value)) or value < 0:
+                raise AssertionError(f"{path.name}: invalid sample {field}")
         for field in ("slowest_rank", "slowest_rank_has_storage", "storage_owner_count"):
             if field not in sample:
                 raise AssertionError(f"{path.name}: missing {field}")

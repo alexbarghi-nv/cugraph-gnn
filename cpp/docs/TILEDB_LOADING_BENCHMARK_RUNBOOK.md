@@ -5,6 +5,9 @@ This is the operational handoff for running the single-node loading benchmark on
 [TILEDB_LOADING_BENCHMARK.md](TILEDB_LOADING_BENCHMARK.md). Read that document before interpreting
 the results.
 
+The newer focused IOPS rerun and `O_DIRECT` experiment have their own operational handoff:
+[TILEDB_DIRECT_IO_IOPS_RUNBOOK.md](TILEDB_DIRECT_IO_IOPS_RUNBOOK.md).
+
 ## Scope and guardrails
 
 - Use only RTX PRO 6000 GPUs 4-7 and CPU socket/NUMA node 1.

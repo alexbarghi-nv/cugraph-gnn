@@ -185,6 +185,15 @@ def parse_args() -> argparse.Namespace:
         help="Capture compact TileDB statistics for every measured TileDB sample",
     )
     parser.add_argument(
+        "--direct-io",
+        action="store_true",
+        help=(
+            "Enable the experimental TileDB O_DIRECT preload adapter after data "
+            "preparation; requires libwholememory_tiledb_direct_io_preload.so in "
+            "LD_PRELOAD and --cache-modes direct"
+        ),
+    )
+    parser.add_argument(
         "--consolidate",
         action="store_true",
         help="Consolidate and vacuum rank-local arrays after ingest",
@@ -773,8 +782,14 @@ def aggregate_rank_phase_metrics(
     return output
 
 
-def proc_io_bytes(process: psutil.Process) -> int:
-    return int(getattr(process.io_counters(), "read_bytes", 0))
+def proc_io_counters(process: psutil.Process) -> dict[str, int]:
+    counters = process.io_counters()
+    return {
+        "read_bytes": int(getattr(counters, "read_bytes", 0)),
+        "write_bytes": int(getattr(counters, "write_bytes", 0)),
+        "read_ops": int(getattr(counters, "read_count", 0)),
+        "write_ops": int(getattr(counters, "write_count", 0)),
+    }
 
 
 def resolve_block_stat(
@@ -794,10 +809,66 @@ def resolve_block_stat(
     return source, stat_path if stat_path.is_file() else None
 
 
-def device_read_bytes(stat_path: Path | None) -> int | None:
+def device_io_counters(stat_path: Path | None) -> dict[str, int] | None:
     if stat_path is None:
         return None
-    return int(stat_path.read_text().split()[2]) * 512
+    fields = [int(value) for value in stat_path.read_text().split()]
+    if len(fields) < 7:
+        raise RuntimeError(f"unexpected block-device stat format: {stat_path}")
+    return {
+        "read_ops": fields[0],
+        "read_bytes": fields[2] * 512,
+        "write_ops": fields[4],
+        "write_bytes": fields[6] * 512,
+    }
+
+
+def counter_delta(after: dict[str, int], before: dict[str, int], field: str) -> int:
+    return max(0, after[field] - before[field])
+
+
+class DirectIOStats:
+    FIELDS = (
+        "direct_io_open_attempts",
+        "direct_io_open_successes",
+        "direct_io_open_failures",
+        "direct_io_read_ops",
+        "direct_io_requested_bytes",
+        "direct_io_submitted_bytes",
+        "direct_io_returned_bytes",
+        "direct_io_read_failures",
+    )
+
+    def __init__(self) -> None:
+        self.lib = None
+        try:
+            lib = ctypes.CDLL(None)
+            version = getattr(lib, "wholememory_tiledb_direct_io_preload_version")
+            version.restype = ctypes.c_uint32
+            if version() != 1:
+                raise RuntimeError("unsupported TileDB Direct I/O preload version")
+            lib.wholememory_tiledb_direct_io_reset_counters.restype = None
+            lib.wholememory_tiledb_direct_io_counter.argtypes = [ctypes.c_uint32]
+            lib.wholememory_tiledb_direct_io_counter.restype = ctypes.c_uint64
+            self.lib = lib
+        except (AttributeError, OSError):
+            pass
+
+    @property
+    def available(self) -> bool:
+        return self.lib is not None
+
+    def reset(self) -> None:
+        if self.lib is not None:
+            self.lib.wholememory_tiledb_direct_io_reset_counters()
+
+    def snapshot(self) -> dict[str, int | None]:
+        if self.lib is None:
+            return {field: None for field in self.FIELDS}
+        return {
+            field: int(self.lib.wholememory_tiledb_direct_io_counter(index))
+            for index, field in enumerate(self.FIELDS)
+        }
 
 
 class TileDBStats:
@@ -920,6 +991,7 @@ def benchmark_case(
     rank: int,
     block_stat: Path | None,
     tiledb_stats: TileDBStats,
+    direct_io_stats: DirectIOStats,
     shared_cache_root: bool,
     owner_boundaries: list[int],
 ) -> list[dict[str, Any]]:
@@ -939,14 +1011,15 @@ def benchmark_case(
         ):
             drop_file_cache(cache_root)
         comm.barrier()
-        device_before = device_read_bytes(block_stat) if rank == 0 else None
+        device_before = device_io_counters(block_stat) if rank == 0 else None
         collect_tiledb_stats = cache_root is not None and tiledb_stats.available
         if collect_tiledb_stats:
             tiledb_stats.reset()
+        direct_io_stats.reset()
         comm.barrier()
 
         trace = traces[(warmup + index) % len(traces)]
-        io_before = proc_io_bytes(process)
+        io_before = proc_io_counters(process)
         cpu_before = time.process_time_ns()
         allocated_before = torch.cuda.memory_allocated()
         torch.cuda.reset_peak_memory_stats()
@@ -956,21 +1029,40 @@ def benchmark_case(
         elapsed = time.perf_counter() - start
         phase_metrics = wmb.get_last_tiledb_gather_metrics()
         cpu_after = time.process_time_ns()
-        io_after = proc_io_bytes(process)
+        io_after = proc_io_counters(process)
         cuda_peak = max(0, torch.cuda.max_memory_allocated() - allocated_before)
         if not math.isfinite(float(output[0, 0].item())):
             raise RuntimeError("gather returned a non-finite value")
         del output
         comm.barrier()
-        device_after = device_read_bytes(block_stat) if rank == 0 else None
+        device_after = device_io_counters(block_stat) if rank == 0 else None
+        direct_io = direct_io_stats.snapshot()
 
         sample = {
             "sample": index,
             "rank": rank,
             "latency_ms": elapsed * 1000.0,
-            "process_read_bytes": max(0, io_after - io_before),
+            "process_read_bytes": counter_delta(io_after, io_before, "read_bytes"),
+            "process_write_bytes": counter_delta(io_after, io_before, "write_bytes"),
+            "process_read_ops": counter_delta(io_after, io_before, "read_ops"),
+            "process_write_ops": counter_delta(io_after, io_before, "write_ops"),
             "device_read_bytes": (
-                max(0, device_after - device_before)
+                counter_delta(device_after, device_before, "read_bytes")
+                if device_after is not None and device_before is not None
+                else None
+            ),
+            "device_write_bytes": (
+                counter_delta(device_after, device_before, "write_bytes")
+                if device_after is not None and device_before is not None
+                else None
+            ),
+            "device_read_ops": (
+                counter_delta(device_after, device_before, "read_ops")
+                if device_after is not None and device_before is not None
+                else None
+            ),
+            "device_write_ops": (
+                counter_delta(device_after, device_before, "write_ops")
                 if device_after is not None and device_before is not None
                 else None
             ),
@@ -978,6 +1070,7 @@ def benchmark_case(
             "cuda_peak_temporary_bytes": cuda_peak,
             "rss_bytes_after": process.memory_info().rss,
             "phase_metrics": phase_metrics,
+            **direct_io,
             **trace_metrics(trace, tile_extent, owner_boundaries),
         }
         if collect_tiledb_stats:
@@ -1030,12 +1123,14 @@ def run_rank(
     )
     results: list[dict[str, Any]] = []
     tiledb_stats = TileDBStats(args.tiledb_stats)
+    direct_io_stats = DirectIOStats()
     metadata = {
         "rank": rank,
         "gpu": torch.cuda.get_device_name(rank),
         "cpu_affinity": sorted(os.sched_getaffinity(0)),
         "tiledb_stats_available": tiledb_stats.available,
         "tiledb_stats_error": tiledb_stats.error,
+        "direct_io_preload_available": direct_io_stats.available,
     }
     try:
         configurations: list[tuple[str, str, int | None, int, Path | None]] = []
@@ -1114,6 +1209,7 @@ def run_rank(
                                 rank,
                                 block_stat,
                                 tiledb_stats,
+                                direct_io_stats,
                                 array_layout == "node",
                                 [*offsets, args.rows],
                             )
@@ -1196,9 +1292,29 @@ def aggregate_rank_results(
                 for sample in rank_samples
                 if sample["device_read_bytes"] is not None
             ]
+            device_writes = [
+                sample["device_write_bytes"]
+                for sample in rank_samples
+                if sample["device_write_bytes"] is not None
+            ]
+            device_read_ops = [
+                sample["device_read_ops"]
+                for sample in rank_samples
+                if sample["device_read_ops"] is not None
+            ]
+            device_write_ops = [
+                sample["device_write_ops"]
+                for sample in rank_samples
+                if sample["device_write_ops"] is not None
+            ]
             process_read_bytes = sum(
                 sample["process_read_bytes"] for sample in rank_samples
             )
+            process_write_bytes = sum(
+                sample["process_write_bytes"] for sample in rank_samples
+            )
+            process_read_ops = sum(sample["process_read_ops"] for sample in rank_samples)
+            process_write_ops = sum(sample["process_write_ops"] for sample in rank_samples)
             trace_summary = aggregate_trace_overlap_metrics(
                 rank_samples, key[5], world_size
             )
@@ -1222,10 +1338,28 @@ def aggregate_rank_results(
                     > 0
                 ),
                 "process_read_bytes": process_read_bytes,
+                "process_write_bytes": process_write_bytes,
+                "process_read_ops": process_read_ops,
+                "process_write_ops": process_write_ops,
+                "process_total_io_ops": process_read_ops + process_write_ops,
                 "device_read_bytes": max(device_reads) if device_reads else None,
+                "device_write_bytes": max(device_writes) if device_writes else None,
+                "device_read_ops": max(device_read_ops) if device_read_ops else None,
+                "device_write_ops": max(device_write_ops) if device_write_ops else None,
+                "device_total_io_ops": (
+                    max(device_read_ops) + max(device_write_ops)
+                    if device_read_ops and device_write_ops
+                    else None
+                ),
                 "measured_read_bytes": max(device_reads)
                 if device_reads
                 else process_read_bytes,
+                "measured_read_ops": max(device_read_ops)
+                if device_read_ops
+                else process_read_ops,
+                "measured_write_ops": max(device_write_ops)
+                if device_write_ops
+                else process_write_ops,
                 "cpu_seconds": sum(sample["cpu_seconds"] for sample in rank_samples),
                 **trace_summary,
                 "contiguous_ranges": sum(
@@ -1245,6 +1379,16 @@ def aggregate_rank_results(
                 "rank_tiledb_stats": [
                     sample.get("tiledb_stats") for sample in rank_samples
                 ],
+                **{
+                    field: sum(
+                        int(sample[field])
+                        for sample in rank_samples
+                        if sample[field] is not None
+                    )
+                    if any(sample[field] is not None for sample in rank_samples)
+                    else None
+                    for field in DirectIOStats.FIELDS
+                },
                 "rank_phase_metrics": [
                     sample["phase_metrics"] for sample in rank_samples
                 ],
@@ -1259,6 +1403,18 @@ def aggregate_rank_results(
                     for field in (*TILEDB_STAT_TIMING_FIELDS, *TILEDB_STAT_COUNT_FIELDS)
                 },
             }
+            sample["storage_read_ops"] = sample["measured_read_ops"]
+            sample["storage_write_ops"] = sample["measured_write_ops"]
+            sample["storage_total_io_ops"] = (
+                sample["storage_read_ops"] + sample["storage_write_ops"]
+            )
+            sample_seconds = sample["latency_ms"] / 1000.0
+            sample["storage_read_iops"] = sample["storage_read_ops"] / sample_seconds
+            sample["storage_write_iops"] = (
+                sample["storage_write_ops"] / sample_seconds
+            )
+            sample["storage_iops"] = sample["storage_total_io_ops"] / sample_seconds
+            sample["storage_total_iops"] = sample["storage_iops"]
             aggregate_samples.append(sample)
             raw_samples.append(
                 {
@@ -1292,11 +1448,41 @@ def aggregate_rank_results(
         process_read_bytes = sum(
             sample["process_read_bytes"] for sample in aggregate_samples
         )
+        process_write_bytes = sum(
+            sample["process_write_bytes"] for sample in aggregate_samples
+        )
+        process_read_ops = sum(
+            sample["process_read_ops"] for sample in aggregate_samples
+        )
+        process_write_ops = sum(
+            sample["process_write_ops"] for sample in aggregate_samples
+        )
         device_values = [
             sample["device_read_bytes"]
             for sample in aggregate_samples
             if sample["device_read_bytes"] is not None
         ]
+        device_write_values = [
+            sample["device_write_bytes"]
+            for sample in aggregate_samples
+            if sample["device_write_bytes"] is not None
+        ]
+        device_read_op_values = [
+            sample["device_read_ops"]
+            for sample in aggregate_samples
+            if sample["device_read_ops"] is not None
+        ]
+        device_write_op_values = [
+            sample["device_write_ops"]
+            for sample in aggregate_samples
+            if sample["device_write_ops"] is not None
+        ]
+        storage_read_ops = sum(
+            sample["measured_read_ops"] for sample in aggregate_samples
+        )
+        storage_write_ops = sum(
+            sample["measured_write_ops"] for sample in aggregate_samples
+        )
         result = {
             "backend": key[0],
             "array_layout": key[1],
@@ -1321,10 +1507,53 @@ def aggregate_rank_results(
             "storage_read_gib": storage_read_bytes / 1024**3,
             "storage_read_gib_per_second": storage_read_bytes / wall_seconds / 1024**3,
             "process_read_gib": process_read_bytes / 1024**3,
+            "process_write_gib": process_write_bytes / 1024**3,
+            "process_read_ops": process_read_ops,
+            "process_write_ops": process_write_ops,
+            "process_total_io_ops": process_read_ops + process_write_ops,
+            "process_iops": (process_read_ops + process_write_ops) / wall_seconds,
+            "process_total_iops": (
+                process_read_ops + process_write_ops
+            ) / wall_seconds,
             "device_read_gib": (
                 sum(device_values) / 1024**3 if device_values else None
             ),
+            "device_write_gib": (
+                sum(device_write_values) / 1024**3 if device_write_values else None
+            ),
+            "device_read_ops": (
+                sum(device_read_op_values) if device_read_op_values else None
+            ),
+            "device_write_ops": (
+                sum(device_write_op_values) if device_write_op_values else None
+            ),
+            "device_total_io_ops": (
+                sum(device_read_op_values) + sum(device_write_op_values)
+                if device_read_op_values and device_write_op_values
+                else None
+            ),
+            "device_iops": (
+                (sum(device_read_op_values) + sum(device_write_op_values))
+                / wall_seconds
+                if device_read_op_values and device_write_op_values
+                else None
+            ),
+            "device_total_iops": (
+                (sum(device_read_op_values) + sum(device_write_op_values))
+                / wall_seconds
+                if device_read_op_values and device_write_op_values
+                else None
+            ),
             "storage_counter_source": "device" if device_values else "process",
+            "storage_read_ops": storage_read_ops,
+            "storage_write_ops": storage_write_ops,
+            "storage_total_io_ops": storage_read_ops + storage_write_ops,
+            "storage_read_iops": storage_read_ops / wall_seconds,
+            "storage_write_iops": storage_write_ops / wall_seconds,
+            "storage_iops": (storage_read_ops + storage_write_ops) / wall_seconds,
+            "storage_total_iops": (
+                storage_read_ops + storage_write_ops
+            ) / wall_seconds,
             "read_amplification": storage_read_bytes / useful_bytes
             if useful_bytes
             else 0.0,
@@ -1488,6 +1717,18 @@ def aggregate_rank_results(
                 if sample[field] is not None
             ]
             result[f"{field}_mean"] = statistics.mean(values) if values else None
+        for field in DirectIOStats.FIELDS:
+            values = [
+                sample[field]
+                for sample in aggregate_samples
+                if sample[field] is not None
+            ]
+            result[field] = sum(values) if values else None
+        requested = result["direct_io_requested_bytes"]
+        submitted = result["direct_io_submitted_bytes"]
+        result["direct_io_alignment_read_amplification"] = (
+            submitted / requested if requested else None
+        )
         results.append(result)
     return results, raw_samples, rank_metadata
 
@@ -1503,20 +1744,35 @@ def benchmark_storage_baseline(
     for sample_index in range(repetitions):
         for path in raw_paths:
             drop_file_cache(path)
-        device_before = device_read_bytes(block_stat)
-        process_before = proc_io_bytes(process)
+        device_before = device_io_counters(block_stat)
+        process_before = proc_io_counters(process)
         start = time.perf_counter()
         for path in raw_paths:
             with path.open("rb", buffering=0) as stream:
                 while stream.readinto(view):
                     pass
         elapsed = time.perf_counter() - start
-        process_after = proc_io_bytes(process)
-        device_after = device_read_bytes(block_stat)
+        process_after = proc_io_counters(process)
+        device_after = device_io_counters(block_stat)
+        process_read_bytes = counter_delta(
+            process_after, process_before, "read_bytes"
+        )
+        process_read_ops = counter_delta(process_after, process_before, "read_ops")
+        process_write_ops = counter_delta(process_after, process_before, "write_ops")
         measured_bytes = (
-            max(0, device_after - device_before)
+            counter_delta(device_after, device_before, "read_bytes")
             if device_after is not None and device_before is not None
-            else max(0, process_after - process_before)
+            else process_read_bytes
+        )
+        measured_read_ops = (
+            counter_delta(device_after, device_before, "read_ops")
+            if device_after is not None and device_before is not None
+            else process_read_ops
+        )
+        measured_write_ops = (
+            counter_delta(device_after, device_before, "write_ops")
+            if device_after is not None and device_before is not None
+            else process_write_ops
         )
         samples.append(
             {
@@ -1525,6 +1781,13 @@ def benchmark_storage_baseline(
                 "logical_gib_per_second": total_bytes / elapsed / 1024**3,
                 "measured_read_gib_per_second": measured_bytes / elapsed / 1024**3,
                 "measured_read_bytes": measured_bytes,
+                "storage_read_ops": measured_read_ops,
+                "storage_write_ops": measured_write_ops,
+                "storage_total_io_ops": measured_read_ops + measured_write_ops,
+                "storage_iops": (measured_read_ops + measured_write_ops) / elapsed,
+                "storage_total_iops": (
+                    measured_read_ops + measured_write_ops
+                ) / elapsed,
             }
         )
     return {
@@ -1532,6 +1795,9 @@ def benchmark_storage_baseline(
         "total_bytes": total_bytes,
         "throughput_mean_gib_per_second": statistics.mean(
             sample["measured_read_gib_per_second"] for sample in samples
+        ),
+        "storage_iops_mean": statistics.mean(
+            sample["storage_iops"] for sample in samples
         ),
         "samples": samples,
     }
@@ -1588,11 +1854,18 @@ def system_metadata(
             "WHOLEMEMORY_TILEDB_COMPUTE_CONCURRENCY"
         ),
         "tiledb_io_concurrency": os.getenv("WHOLEMEMORY_TILEDB_IO_CONCURRENCY"),
+        "tiledb_direct_io": args.direct_io,
+        "tiledb_direct_io_root": os.getenv("WHOLEMEMORY_TILEDB_DIRECT_IO_ROOT"),
+        "tiledb_direct_io_preload_available": DirectIOStats().available,
         "cuda_visible_devices": os.getenv("CUDA_VISIBLE_DEVICES"),
         "process_cpu_affinity": sorted(os.sched_getaffinity(0)),
         "cpu_baseline": "WholeMemory distributed/cpu (cudaMallocHost)",
         "cuda_baseline": "WholeMemory distributed/cuda",
-        "cold_cache_method": "POSIX_FADV_DONTNEED before each sample; rank 0 evicts node-shared arrays",
+        "cold_cache_method": (
+            "O_DIRECT bypasses the Linux page cache for array reads"
+            if args.direct_io
+            else "POSIX_FADV_DONTNEED before each sample; rank 0 evicts node-shared arrays"
+        ),
         "aggregate_latency": "maximum rank latency per synchronized sample",
         "aggregate_phase_metrics": (
             "legacy phase columns come from the slowest end-to-end rank; "
@@ -1603,7 +1876,10 @@ def system_metadata(
             "cross_rank_25 and within_rank_25 share a digest for a given placement, "
             "batch, and sample"
         ),
-        "storage_counter": "block-device sectors when available, otherwise summed process read_bytes",
+        "storage_counter": (
+            "block-device completed read/write operations and sectors when available; "
+            "otherwise summed process read/write syscall counts and bytes"
+        ),
     }
 
 
@@ -1645,6 +1921,15 @@ def write_results(
 
 def main() -> None:
     args = parse_args()
+    # The preload must be present at process startup, but O_DIRECT is enabled only
+    # after raw-file and TileDB-array preparation has completed.
+    if args.direct_io:
+        os.environ.pop("WHOLEMEMORY_TILEDB_DIRECT_IO", None)
+        os.environ.pop("WHOLEMEMORY_TILEDB_DIRECT_IO_ROOT", None)
+    args.data_dir = args.data_dir.resolve()
+    args.output = args.output.resolve()
+    if args.direct_io and args.output.is_relative_to(args.data_dir):
+        raise ValueError("Direct I/O output must not be inside the TileDB data directory")
     if (
         args.rows <= 0
         or args.width <= 0
@@ -1695,11 +1980,16 @@ def main() -> None:
                 f"every batch size must be divisible by {repeat} for overlap "
                 f"case {case}"
             )
-    unknown_cache_modes = set(args.cache_modes) - {"cold", "warm"}
+    unknown_cache_modes = set(args.cache_modes) - {"cold", "warm", "direct"}
     if unknown_cache_modes or not args.cache_modes:
         raise ValueError(
-            f"cache modes must contain cold and/or warm, got {sorted(unknown_cache_modes)}"
+            "cache modes must contain cold, warm, and/or direct, got "
+            f"{sorted(unknown_cache_modes)}"
         )
+    if args.direct_io and args.cache_modes != ["direct"]:
+        raise ValueError("--direct-io requires exactly --cache-modes direct")
+    if not args.direct_io and "direct" in args.cache_modes:
+        raise ValueError("cache mode direct requires --direct-io")
     overlap_patterns = [
         overlap_pattern(case, placement)
         for placement in args.overlap_placements
@@ -1780,6 +2070,17 @@ def main() -> None:
         if args.storage_baseline
         else None
     )
+    if args.direct_io:
+        direct_io_stats = DirectIOStats()
+        if not direct_io_stats.available:
+            raise RuntimeError(
+                "--direct-io requires libwholememory_tiledb_direct_io_preload.so "
+                "in LD_PRELOAD when Python starts"
+            )
+        os.environ["WHOLEMEMORY_TILEDB_DIRECT_IO_ROOT"] = str(
+            args.data_dir.resolve()
+        )
+        os.environ["WHOLEMEMORY_TILEDB_DIRECT_IO"] = "1"
     metadata = system_metadata(args, raw_paths, block_device, block_stat)
     worker = partial(
         run_rank,

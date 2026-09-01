@@ -189,6 +189,18 @@ if(BUILD_WITH_TILEDB)
     wholememory_tiledb_ingest PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
   )
   install(TARGETS wholememory_tiledb_ingest RUNTIME DESTINATION bin)
+
+  if(UNIX AND NOT APPLE)
+    add_library(wholememory_tiledb_direct_io_preload SHARED
+                tools/tiledb_direct_io_preload.cpp)
+    target_link_libraries(wholememory_tiledb_direct_io_preload PRIVATE ${CMAKE_DL_LIBS})
+    set_target_properties(
+      wholememory_tiledb_direct_io_preload
+      PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
+                 OUTPUT_NAME wholememory_tiledb_direct_io_preload
+    )
+    install(TARGETS wholememory_tiledb_direct_io_preload LIBRARY DESTINATION lib)
+  endif()
 endif()
 
 if(CUDAToolkit_VERSION VERSION_GREATER "12.3")

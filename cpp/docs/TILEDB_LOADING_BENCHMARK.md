@@ -11,6 +11,8 @@ processes and their memory allocations to CPU socket/NUMA node 1, which is local
 
 For machine setup, preflight gates, smoke testing, restart behavior, and result handoff, follow
 [TILEDB_LOADING_BENCHMARK_RUNBOOK.md](TILEDB_LOADING_BENCHMARK_RUNBOOK.md).
+For the focused physical-IOPS rerun and experimental Direct I/O comparison, follow
+[TILEDB_DIRECT_IO_IOPS_RUNBOOK.md](TILEDB_DIRECT_IO_IOPS_RUNBOOK.md).
 
 Run the complete width matrix with:
 
@@ -142,6 +144,17 @@ summed. The result also retains TileDB range, tile, VFS-operation, and VFS-byte 
 Cold-cache control uses `POSIX_FADV_DONTNEED`, which does not require root but is an eviction hint.
 The measured `/dev/nvme1n1` sector deltas are therefore the authoritative check that a cold sample
 actually reached storage. Warm cases read the complete array into the page cache before timing.
+
+The benchmark also records completed block-device read and write operations. Aggregate and raw
+sample outputs include total I/O operations and read, write, and total IOPS. These are physical
+block-layer measurements from `/sys/class/block/DEVICE/stat` when available; summed process syscall
+counts are retained as a fallback. They are distinct from TileDB logical VFS operations, ranges,
+and tiles.
+
+An experimental `--direct-io` mode is available through
+`libwholememory_tiledb_direct_io_preload.so`. It applies `O_DIRECT` only after data preparation,
+repairs unaligned TileDB reads with aligned bounce buffers, and reports operation and byte counters.
+See `TILEDB_DIRECT_IO_IOPS_RUNBOOK.md` for the focused comparison and acceptance checks.
 
 The script produces one JSON, aggregate CSV, raw-sample CSV, and per-rank checkpoint per vector
 width. The benchmark intentionally does not generate a report artifact; the CSVs are the primary
