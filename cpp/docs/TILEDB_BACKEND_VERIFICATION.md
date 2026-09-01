@@ -19,6 +19,12 @@ Updated: 2026-08-28 with the follow-on paired-overlap and multi-run runbook upda
 10/40/100-run clustered multi-run cases, on GPUs 4-7 / NUMA node 1. The unchanged optional complete
 matrix was not re-run.
 
+Updated: 2026-09-01 with `TILEDB_DIRECT_IO_IOPS_RUNBOOK.md` (commit `0558484`): rebuilt with the
+new `libwholememory_tiledb_direct_io_preload.so`, reran the ICL-shaped overlap curves with
+block-device IOPS counters, and ran the experimental `O_DIRECT` TileDB read path comparison
+(primary 40-run case plus the optional 10/40/100-run sensitivity sweep), on GPUs 4-7 / NUMA
+node 1.
+
 ## Executive summary
 
 The TileDB-enabled library and Python packages build successfully in an isolated Conda environment.
@@ -709,6 +715,95 @@ Same as the 2026-08-28 TabICLv2 overlap run above (`git fetch fork`/`micromamba 
 substitutions, `LD_LIBRARY_PATH`, `pytest --import-mode=append`, `print_env.sh` permissions);
 applied proactively this time since they were already known. No new deviations were required.
 
+## TileDB Direct I/O and IOPS benchmark (2026-09-01)
+
+- Host: `4u8g-tur-0037`. Branch commit: `05584840db21a1e7c85129b37390ebc42703e3f5`
+  (`prototype/tiledb-backend`, "Add TileDB Direct I/O and IOPS benchmarks").
+- Rebuild: `cmake --build cpp/build -j"$(nproc)"` + `cmake --install cpp/build` picked up the new
+  `wholememory_tiledb_direct_io_preload` CMake target without a full reconfigure/clean rebuild;
+  installed to `<env>/lib/libwholememory_tiledb_direct_io_preload.so` (22 KiB).
+- Data dir (reused, unmodified): `/raid/abarghi/wholememory-tiledb-loading-20260827T194011Z/full`.
+- Result dirs: `/raid/abarghi/wholememory-tiledb-direct-io-iops-20260901T221142Z` (primary matrix)
+  and `...-sensitivity` (optional 10/40/100-run sweep).
+- Preflight: `/raid` confirmed backed by local `/dev/nvme1n1p1` ext4 (not network storage); logical
+  block size 512 B, physical 4 KiB; GPUs 4-7 confirmed on NUMA node 1; node 1 had 148 GiB free
+  (page cache reclaimed further since the 2026-08-28 runs); no unrelated GPU/storage activity.
+- Scope: primary matrix (step 3, required) and the optional sensitivity sweep (step 4) — run
+  because the primary Direct I/O case passed every acceptance check and produced a latency within
+  noise of buffered-cold, which the runbook treats as the trigger to extend it.
+
+### Pass/fail status and elapsed time
+
+| Step | Status | UTC window | Elapsed |
+|---|---|---|---:|
+| Rebuild + install | PASS | — | — |
+| Primary matrix (direct-io-multirun + 3 buffered IOPS reruns) | PASS | 22:12:01-22:21:05 | ~9 m 4 s |
+| Optional sensitivity sweep (10/40/100-run) | PASS | 22:21:05-22:30:53 | ~9 m 48 s |
+| **Total** | | 22:12:01-22:30:53 | **~18 m 52 s** |
+
+### Aggregate case/sample counts
+
+| Result set | Aggregate cases | Samples |
+|---|---:|---:|
+| Primary: `direct-io-multirun-width-2048` | 1 | 5 |
+| Primary: `iops-overlap-clustered-width-2048` | 21 | 105 |
+| Primary: `iops-overlap-scattered-width-2048` | 6 | 30 |
+| Primary: `iops-overlap-multirun-width-2048` | 18 | 90 |
+| **Primary total** | **46** | **230** |
+| Sensitivity: `direct-io-multirun-width-2048` | 3 | 15 |
+| Sensitivity: `iops-overlap-clustered-width-2048` | 21 | 105 |
+| Sensitivity: `iops-overlap-scattered-width-2048` | 6 | 30 |
+| Sensitivity: `iops-overlap-multirun-width-2048` | 18 | 90 |
+| **Sensitivity total** | **48** | **240** |
+
+Each launcher invocation ran the checked-in validator (`validate_tiledb_direct_io_iops_results.py`)
+automatically at the end and reported, respectively:
+
+```text
+PASS: 46 aggregate configurations, 230 samples, IOPS complete, Direct I/O interception verified
+PASS: 48 aggregate configurations, 240 samples, IOPS complete, Direct I/O interception verified
+```
+
+### Direct I/O acceptance checks
+
+All 4 Direct I/O aggregate rows (1 primary + 3 sensitivity) satisfied every acceptance criterion
+from the runbook: `cache_mode=direct`; positive intercepted open/read counts (e.g. 400 opens/200
+reads for the primary 40-run case); zero open and read failures; returned bytes exactly equal to
+requested bytes; aligned submitted bytes at or above requested bytes
+(`direct_io_alignment_read_amplification` between 1.0000 and 1.0 across all four); and positive
+physical block-device read operations (`storage_read_ops` 34,872-35,xxx range). No manual `strace`
+diagnosis was needed.
+
+### Direct I/O vs. buffered-cold comparison (same 40-run cross-rank topology)
+
+| Run count | Direct I/O mean latency | Buffered-cold mean latency | Direct I/O IOPS | Buffered-cold IOPS | Direct I/O useful GiB/s | Buffered-cold useful GiB/s |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10 | 220.30 ms | 211.27 ms | 29,464.7 | 30,676.2 | 13.852 | 14.445 |
+| 40 | 218.96 ms | 219.96 ms | 31,810.4 | 31,890.3 | 13.938 | 13.874 |
+| 100 | 242.48 ms | 248.94 ms | 32,912.3 | 32,931.9 | 12.586 | 12.259 |
+
+Direct I/O tracked buffered-cold within about 4% at every run count in this environment — neither
+consistently faster nor slower, all differences within run-to-run noise for a 5-repetition sample.
+This experimental path did not need to reduce latency to be worth preserving evidence for: whether
+it reduces host page-cache pressure under TabICL model memory pressure is a separate question this
+run did not measure and is not decided here.
+
+### Other checks
+
+Across all 8 aggregate result files (primary + sensitivity): 0 non-finite/non-positive latency
+values, 0 CPU-backend GPU-path (`gpu_sort_mean_ms`/`gpu_deduplicate_mean_ms`) violations, and all 30
+cold TileDB aggregate rows reported nonzero `storage_read_gib`. All 32 rank checkpoints reported
+`cpu_affinity` entirely within NUMA node 1 (cores 64-127, 192-255). `/raid` free space held at
+298 GiB throughout (no new arrays were created; this run only measured against the existing
+dataset).
+
+### Deviations from the runbook
+
+None required. The environment/import-mode fixes from the prior TabICLv2 overlap runs were already
+in place and did not need to be reapplied (this runbook does not invoke `pytest`). The literal
+`cmake --build cpp/build` command picked up the CMakeLists.txt change and re-triggered CMake's
+configure step automatically; no manual reconfigure was necessary.
+
 ## Additional findings
 
 ### Partition-list API mismatch
@@ -768,6 +863,11 @@ communication.
 8. [ ] Develop and run the end-to-end TabICLv2 fine-tuning trace-based benchmark (with real
    time-series ordering and grouped-contiguous random contexts) as a separate effort — the overlap
    matrix above deliberately does not yet model those application-specific access patterns.
+9. [x] Rerun the ICL-shaped overlap curves with physical block-device IOPS counters and compare the
+   primary 40-run cross-rank case with the experimental `O_DIRECT` TileDB read path
+   (`TILEDB_DIRECT_IO_IOPS_RUNBOOK.md`). Direct I/O passed every acceptance check and tracked
+   buffered-cold latency within ~4% across the 10/40/100-run sensitivity sweep; see above. Whether
+   it reduces host page-cache pressure under real TabICL model memory pressure is still unmeasured.
 
 ## Final status
 
@@ -792,4 +892,6 @@ communication.
 | Focused TabICLv2-oriented overlap matrix (2026-08-28) | PASS: 54/54 cases, 270/270 samples |
 | Optional complete matrix, widths 128/512/2,048 (2026-08-28) | PASS: 468/468 cases, 4,680/4,680 samples |
 | Follow-on paired-overlap + multi-run matrix (2026-08-28) | PASS: 72/72 cases, 360/360 samples |
+| Direct I/O + IOPS matrix, primary (2026-09-01) | PASS: 46/46 cases, 230/230 samples |
+| Direct I/O + IOPS matrix, sensitivity sweep (2026-09-01) | PASS: 48/48 cases, 240/240 samples |
 | Four-rank complete loading matrix (all widths, 10 reps) | NOT YET RUN |
